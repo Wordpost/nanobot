@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+import re
 import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -21,19 +23,109 @@ from nanobot.config.schema import ExecToolConfig
 from nanobot.providers.base import LLMProvider
 
 
-class _SubagentHook(AgentHook):
-    """Logging-only hook for subagent execution."""
+def _slugify(text: str) -> str:
+    """Convert text to a filesystem-safe slug."""
+    slug = re.sub(r'[^\w\s-]', '', text.lower())
+    slug = re.sub(r'[-\s]+', '_', slug).strip('_')
+    return slug[:50]
 
-    def __init__(self, task_id: str) -> None:
+
+class _SubagentLogHook(AgentHook):
+    """Lifecycle hook that logs subagent execution to a Markdown file.
+
+    Creates a detailed execution report at ``workspace/subagents/{task_id}_{slug}.md``
+    containing the system prompt, each iteration's tool calls with arguments and
+    results, model responses, and the final outcome.
+    """
+
+    _MAX_RESULT_CHARS = 2000
+    _MAX_THINKING_CHARS = 3000
+
+    def __init__(
+        self,
+        task_id: str,
+        label: str,
+        task: str,
+        system_prompt: str,
+        workspace: Path,
+    ) -> None:
         self._task_id = task_id
+        self._label = label
+        self._log_dir = workspace / "subagents"
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._log_file = self._log_dir / f"{task_id}_{_slugify(label)}.md"
+        self._started = datetime.now()
+        self._write_header(task, system_prompt)
+
+    def _write_header(self, task: str, system_prompt: str) -> None:
+        header = (
+            f"# Subagent: {self._label}\n\n"
+            f"- **Task ID:** `{self._task_id}`\n"
+            f"- **Started:** `{self._started.isoformat()}`\n\n"
+            "---\n\n"
+            "## Task\n\n"
+            f"{task}\n\n"
+            "---\n\n"
+            "## System Prompt\n\n"
+            "<details>\n"
+            "<summary>Click to expand</summary>\n\n"
+            f"```\n{system_prompt}\n```\n\n"
+            "</details>\n\n"
+            "---\n\n"
+            "## Execution Log\n\n"
+        )
+        self._log_file.write_text(header, encoding="utf-8")
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
-        for tool_call in context.tool_calls:
-            args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+        for tc in context.tool_calls:
+            args_str = json.dumps(tc.arguments, ensure_ascii=False)
             logger.debug(
                 "Subagent [{}] executing: {} with arguments: {}",
-                self._task_id, tool_call.name, args_str,
+                self._task_id, tc.name, args_str,
             )
+
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        lines: list[str] = [f"### Iteration {context.iteration}\n"]
+
+        if context.response and context.response.content:
+            thinking = context.response.content
+            if len(thinking) > self._MAX_THINKING_CHARS:
+                thinking = thinking[: self._MAX_THINKING_CHARS] + "\n\n... (truncated)"
+            lines.append(f"**Model Response:**\n\n{thinking}\n")
+
+        for i, tc in enumerate(context.tool_calls):
+            lines.append(self._format_tool_call(tc, context.tool_results, i))
+
+        lines.append("---\n")
+        self._append("\n".join(lines))
+
+    def _format_tool_call(self, tc: Any, results: list[Any], index: int) -> str:
+        """Format a single tool call with its arguments and result."""
+        args_str = json.dumps(tc.arguments, ensure_ascii=False, indent=2)
+        block = f"#### \U0001f527 `{tc.name}`\n\n**Arguments:**\n```json\n{args_str}\n```\n"
+        if index < len(results):
+            result_str = str(results[index])
+            if len(result_str) > self._MAX_RESULT_CHARS:
+                result_str = result_str[: self._MAX_RESULT_CHARS] + "\n... (truncated)"
+            block += f"**Result:**\n```\n{result_str}\n```\n"
+        return block
+
+    def write_final(self, status: Literal["ok", "error"], result: str) -> None:
+        """Write final outcome. Called explicitly from SubagentManager."""
+        elapsed = datetime.now() - self._started
+        status_icon = "\u2705 COMPLETED" if status == "ok" else "\u274c FAILED"
+        footer = (
+            f"\n## Result\n\n"
+            f"- **Status:** {status_icon}\n"
+            f"- **Finished:** `{datetime.now().isoformat()}`\n"
+            f"- **Duration:** `{elapsed.total_seconds():.1f}s`\n\n"
+            f"{result}\n"
+        )
+        self._append(footer)
+
+    def _append(self, text: str) -> None:
+        with self._log_file.open("a", encoding="utf-8") as f:
+            f.write(text)
 
 
 class SubagentManager:
@@ -105,6 +197,7 @@ class SubagentManager:
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
+        hook: _SubagentLogHook | None = None
 
         try:
             # Build subagent tools (no message tool, no spawn tool)
@@ -131,43 +224,42 @@ class SubagentManager:
                 {"role": "user", "content": task},
             ]
 
+            hook = _SubagentLogHook(task_id, label, task, system_prompt, self.workspace)
+
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
                 model=self.model,
                 max_iterations=15,
-                hook=_SubagentHook(task_id),
+                hook=hook,
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
             ))
             if result.stop_reason == "tool_error":
+                partial = self._format_partial_progress(result)
+                hook.write_final("error", partial)
                 await self._announce_result(
-                    task_id,
-                    label,
-                    task,
-                    self._format_partial_progress(result),
-                    origin,
-                    "error",
+                    task_id, label, task, partial, origin, "error",
                 )
                 return
             if result.stop_reason == "error":
+                error_msg = result.error or "Error: subagent execution failed."
+                hook.write_final("error", error_msg)
                 await self._announce_result(
-                    task_id,
-                    label,
-                    task,
-                    result.error or "Error: subagent execution failed.",
-                    origin,
-                    "error",
+                    task_id, label, task, error_msg, origin, "error",
                 )
                 return
             final_result = result.final_content or "Task completed but no final response was generated."
 
+            hook.write_final("ok", final_result)
             logger.info("Subagent [{}] completed successfully", task_id)
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
+            if hook is not None:
+                hook.write_final("error", error_msg)
             logger.error("Subagent [{}] failed: {}", task_id, e)
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
