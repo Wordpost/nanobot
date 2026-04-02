@@ -136,6 +136,7 @@ class SubagentManager:
         provider: LLMProvider,
         workspace: Path,
         bus: MessageBus,
+        max_tool_result_chars: int,
         model: str | None = None,
         web_search_config: "WebSearchConfig | None" = None,
         web_proxy: str | None = None,
@@ -148,6 +149,7 @@ class SubagentManager:
         self.workspace = workspace
         self.bus = bus
         self.model = model or provider.get_default_model()
+        self.max_tool_result_chars = max_tool_result_chars
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
@@ -231,6 +233,7 @@ class SubagentManager:
                 tools=tools,
                 model=self.model,
                 max_iterations=15,
+                max_tool_result_chars=self.max_tool_result_chars,
                 hook=hook,
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
