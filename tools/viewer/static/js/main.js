@@ -5,6 +5,7 @@ import { state } from './state.js';
 import { API } from './api.js';
 import { UI } from './ui.js';
 import { Router } from './router.js';
+import { ConfigEditor } from './config-editor.js';
 
 let logStream = null;
 let sessionWatcher = null;
@@ -28,6 +29,9 @@ async function init() {
         Router.init();
         setupEventListeners();
         startSessionWatcher();
+
+        // Initialize the logic-driven UI blocks config editor
+        window.configEditor = new ConfigEditor();
     } catch (e) {
         console.error('Initialization error:', e);
     }

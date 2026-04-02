@@ -28,7 +28,7 @@ class WebhookChannel(BaseChannel):
             "mappings": {
                 "messageTemplate": "",
                 "senderTemplate": "webhook",
-                "chatTemplate": "webhook",
+                "sessionKey": "webhook",
             }
         }
 
@@ -103,7 +103,7 @@ class WebhookChannel(BaseChannel):
         """Extract text, sender, and chat_id from JSON body via mapped templates."""
         text = self._render_template(self.raw_mappings.get("messageTemplate"), body)
         sender = self._render_template(self.raw_mappings.get("senderTemplate", "webhook"), body)
-        chat_id = self._render_template(self.raw_mappings.get("chatTemplate", "webhook"), body)
+        chat_id = self._render_template(self.raw_mappings.get("sessionKey", "webhook"), body)
 
         if not text:
             # Fallback for arbitrary payloads with no templates

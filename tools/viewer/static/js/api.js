@@ -23,6 +23,25 @@ export const API = {
         return await res.json();
     },
 
+    async fetchConfigManager() {
+        const res = await fetch('/api/config-manager');
+        if (!res.ok) throw new Error('Failed to fetch full config.json');
+        return await res.json();
+    },
+
+    async saveConfigManager(payload) {
+        const res = await fetch('/api/config-manager', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+            const errString = await res.text();
+            throw new Error(`Save failed: ${errString}`);
+        }
+        return await res.json();
+    },
+
     /**
      * Open SSE stream for Docker logs.
      * @returns {EventSource}
