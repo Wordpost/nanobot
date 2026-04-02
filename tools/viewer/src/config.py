@@ -77,6 +77,7 @@ def _find_sessions_dir() -> Path:
 PORT = int(os.getenv("NANOBOT_PORT", "2003"))
 HOST = os.getenv("NANOBOT_HOST", "127.0.0.1")
 SESSIONS_DIR = _find_sessions_dir()
+SUBAGENTS_DIR = SESSIONS_DIR.parent / "subagents"
 CONTAINER_NAME = os.getenv("NANOBOT_CONTAINER", "nanobot-gateway")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"

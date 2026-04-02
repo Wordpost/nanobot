@@ -19,7 +19,11 @@ export const UI = {
         get deployPanel() { return document.getElementById('deploy-panel'); },
         get deployToggle() { return document.getElementById('deploy-toggle'); },
         get restartToggle() { return document.getElementById('restart-toggle'); },
-        get deployContent() { return document.getElementById('deploy-content'); }
+        get deployContent() { return document.getElementById('deploy-content'); },
+        get subagentPanel() { return document.getElementById('subagent-panel'); },
+        get subagentToggle() { return document.getElementById('subagent-toggle'); },
+        get subagentListEl() { return document.getElementById('subagent-list'); },
+        get subagentDetailEl() { return document.getElementById('subagent-detail'); }
     },
 
     escapeHtml(str) {
@@ -276,6 +280,10 @@ export const UI = {
             const role = (m.role || 'system').toLowerCase();
             const dateObj = this.parseDate(m.timestamp);
             const time = dateObj ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+            // Detect spawn tool call → render inline subagent card
+            const spawnCard = this.renderSpawnCard(m);
+            if (spawnCard) return spawnCard;
             
             return `
                 <div class="message ${role}" style="--j: ${idx}">
@@ -366,6 +374,189 @@ export const UI = {
                 `).join('')}
             </div>
         `;
+    },
+
+    // ── Subagent Inline Cards ───────────────────────────────
+
+    /**
+     * Detect spawn tool calls or subagent result messages and render inline cards.
+     * Returns HTML string if message is a spawn-related message, null otherwise.
+     */
+    renderSpawnCard(msg) {
+        // 1. Detect tool result from 'spawn' call — message with tool_call_id and name='spawn'
+        if (msg.role === 'tool' && msg.name === 'spawn' && typeof msg.content === 'string') {
+            const idMatch = msg.content.match(/\(id:\s*([a-f0-9]+)\)/);
+            const taskId = idMatch ? idMatch[1] : '';
+            const labelMatch = msg.content.match(/Subagent\s+\[([^\]]+)\]/);
+            const label = labelMatch ? labelMatch[1] : 'Subagent';
+
+            return `
+                <div class="subagent-card" data-task-id="${taskId}">
+                    <div class="subagent-card-header subagent-card-toggle">
+                        <div class="subagent-card-title">
+                            <span class="icon">🤖</span>
+                            SUBAGENT SPAWNED
+                        </div>
+                        <div class="subagent-card-meta">
+                            <span class="subagent-status running">⏳ RUNNING</span>
+                            <span class="subagent-duration">${this.escapeHtml(taskId)}</span>
+                            <span class="chevron">▶</span>
+                        </div>
+                    </div>
+                    <div class="subagent-card-body hidden">
+                        <div class="subagent-task-desc">${this.escapeHtml(label)}</div>
+                        <div class="loading-state" style="padding: 20px;"><div class="spinner"></div><span>Loading execution log...</span></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 2. Detect assistant message with spawn tool_calls
+        if (msg.role === 'assistant' && msg.tool_calls) {
+            const spawnCall = msg.tool_calls.find(tc => (tc.function?.name || tc.name) === 'spawn');
+            if (spawnCall) {
+                let args = {};
+                try {
+                    args = typeof spawnCall.function?.arguments === 'string'
+                        ? JSON.parse(spawnCall.function.arguments)
+                        : (spawnCall.function?.arguments || {});
+                } catch { /* ignore */ }
+
+                const dateObj = this.parseDate(msg.timestamp);
+                const time = dateObj ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                const otherCalls = msg.tool_calls.filter(tc => (tc.function?.name || tc.name) !== 'spawn');
+
+                return `
+                    <div class="message assistant" style="--j: 0">
+                        <div class="message-header">
+                            <span class="message-role">assistant</span>
+                            <span class="message-time">${time}</span>
+                        </div>
+                        ${msg.content ? `<div class="message-content">${this.renderContent(msg.content)}</div>` : ''}
+                        <div class="subagent-card">
+                            <div class="subagent-card-header subagent-card-toggle">
+                                <div class="subagent-card-title">
+                                    <span class="icon">🚀</span>
+                                    SPAWNING SUBAGENT: ${this.escapeHtml(args.label || (args.task || '').substring(0, 40))}
+                                </div>
+                                <div class="subagent-card-meta">
+                                    <span class="chevron">▶</span>
+                                </div>
+                            </div>
+                            <div class="subagent-card-body hidden">
+                                <div class="subagent-task-desc">${this.escapeHtml(args.task || '')}</div>
+                            </div>
+                        </div>
+                        ${this.renderToolCalls(otherCalls)}
+                        ${msg.reasoning ? `
+                            <div class="reasoning-toggle">
+                                <i class="fas fa-brain"></i> REASONING <i class="fas fa-chevron-down chevron"></i>
+                            </div>
+                            <div class="reasoning-block hidden">${this.renderContent(msg.reasoning)}</div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+        }
+
+        return null;
+    },
+
+    // ── Subagent Panel (Bottom Panel) ──────────────────────
+
+    renderSubagentList(subagents) {
+        const el = this.dom.subagentListEl;
+        if (!el) return;
+
+        if (!subagents || subagents.length === 0) {
+            el.innerHTML = '<div class="subagent-panel-empty">No subagent executions found</div>';
+            return;
+        }
+
+        el.innerHTML = subagents.map(s => `
+            <div class="subagent-list-item" data-filename="${this.escapeHtml(s.filename)}">
+                <div>
+                    <span class="subagent-list-label">${this.escapeHtml(s.label || s.filename)}</span>
+                    <span class="subagent-list-id">${this.escapeHtml(s.task_id)}</span>
+                </div>
+                <div class="subagent-list-right">
+                    <span class="subagent-status ${s.status}">${s.status === 'ok' ? '✅' : s.status === 'error' ? '❌' : '⏳'} ${s.status.toUpperCase()}</span>
+                    ${s.duration ? `<span class="subagent-duration">${this.escapeHtml(s.duration)}</span>` : ''}
+                </div>
+            </div>
+        `).join('');
+    },
+
+    renderSubagentDetail(detail) {
+        const el = this.dom.subagentDetailEl;
+        if (!el) return;
+
+        if (!detail) {
+            el.innerHTML = '<div class="subagent-panel-empty">Select a subagent to view execution log</div>';
+            return;
+        }
+
+        const statusClass = detail.status || 'unknown';
+        const statusIcon = detail.status === 'ok' ? '✅' : detail.status === 'error' ? '❌' : '⏳';
+
+        let html = `
+            <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <span class="subagent-status ${statusClass}">${statusIcon} ${(detail.status || 'unknown').toUpperCase()}</span>
+                ${detail.duration ? `<span class="subagent-duration">${this.escapeHtml(detail.duration)}</span>` : ''}
+                ${detail.started ? `<span class="subagent-duration">Started: ${this.escapeHtml(detail.started)}</span>` : ''}
+            </div>
+        `;
+
+        if (detail.task) {
+            html += `<div class="subagent-task-desc">${this.escapeHtml(detail.task)}</div>`;
+        }
+
+        // Iterations
+        if (detail.iterations && detail.iterations.length > 0) {
+            html += detail.iterations.map(iter => {
+                const toolsHtml = (iter.tool_calls || []).map(tc => `
+                    <div class="subagent-tc">
+                        <div class="subagent-tc-name subagent-tc-toggle">
+                            🔧 ${this.escapeHtml(tc.name)}
+                            <span class="chevron">▶</span>
+                        </div>
+                        <div class="subagent-tc-detail hidden">
+                            ${tc.arguments ? `<div class="subagent-tc-label">Arguments</div><pre>${this.escapeHtml(tc.arguments)}</pre>` : ''}
+                            ${tc.result ? `<div class="subagent-tc-label">Result</div><pre>${this.escapeHtml(tc.result)}</pre>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+
+                return `
+                    <div class="subagent-iteration">
+                        <div class="subagent-iter-header subagent-iter-toggle">
+                            <span class="chevron">▶</span>
+                            Iteration ${iter.number}
+                            <span style="color: var(--text-muted); font-weight: 400;">(${(iter.tool_calls || []).length} tool calls)</span>
+                        </div>
+                        <div class="subagent-iter-body hidden">
+                            ${iter.model_response ? `<div class="subagent-model-resp">${this.escapeHtml(iter.model_response)}</div>` : ''}
+                            ${toolsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Final result
+        if (detail.final_result) {
+            html += `<div class="subagent-final-result ${statusClass}">${this.escapeHtml(detail.final_result)}</div>`;
+        }
+
+        el.innerHTML = html;
+    },
+
+    setSubagentActiveItem(filename) {
+        const el = this.dom.subagentListEl;
+        if (!el) return;
+        el.querySelectorAll('.subagent-list-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.filename === filename);
+        });
     },
 
     renderLogs(logs) {

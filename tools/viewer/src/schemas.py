@@ -34,3 +34,44 @@ class AppConfig(BaseModel):
     sessions_dir: str
     container_name: str
     version: str = "2.0.0-modular"
+
+
+class SubagentToolCall(BaseModel):
+    name: str
+    arguments: str = ""
+    result: str = ""
+
+
+class SubagentIteration(BaseModel):
+    number: int
+    model_response: Optional[str] = None
+    tool_calls: List[SubagentToolCall] = []
+
+
+class SubagentSummary(BaseModel):
+    filename: str
+    task_id: str = ""
+    label: str = ""
+    status: str = "unknown"
+    started: Optional[str] = None
+    finished: Optional[str] = None
+    duration: Optional[str] = None
+
+
+class SubagentDetail(BaseModel):
+    filename: str
+    task_id: str = ""
+    label: str = ""
+    status: str = "unknown"
+    started: Optional[str] = None
+    finished: Optional[str] = None
+    duration: Optional[str] = None
+    task: str = ""
+    iterations: List[SubagentIteration] = []
+    final_result: str = ""
+
+
+class SubagentListResponse(BaseModel):
+    subagents: List[SubagentSummary]
+    total: int
+

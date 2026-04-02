@@ -114,5 +114,33 @@ export const API = {
         };
         es.onerror = () => { if (onError) onError(); };
         return es;
+    },
+
+    // ── Subagent API ──────────────────────────────────────────
+
+    async fetchSubagents() {
+        const res = await fetch('/api/subagents');
+        if (!res.ok) throw new Error('Failed to fetch subagents');
+        return await res.json();
+    },
+
+    async fetchSubagentDetail(filename) {
+        const res = await fetch(`/api/subagents/${filename}`);
+        if (!res.ok) throw new Error('Failed to fetch subagent detail');
+        return await res.json();
+    },
+
+    watchSubagents(onUpdate, onError) {
+        const es = new EventSource('/api/subagents/watch');
+        es.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                onUpdate(data);
+            } catch (err) {
+                console.error('Subagent watch parse error:', err);
+            }
+        };
+        es.onerror = () => { if (onError) onError(); };
+        return es;
     }
 };

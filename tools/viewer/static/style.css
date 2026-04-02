@@ -248,7 +248,7 @@ body {
     gap: 6px;
     padding: 16px;
     margin: 4px 0;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: all var(--transition-fast);
     border: 1px solid transparent;
@@ -339,53 +339,72 @@ body {
     font-family: var(--font-mono);
 }
 
-/* Logs Toggle */
+/* ─── Sidebar Toolbar ────────────────────── */
 
-.logs-toggle {
+.sidebar-toolbar {
+    border-top: 1px solid var(--border-default);
+    padding: 10px 12px 12px;
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 8px;
-    padding: 14px 20px;
-    border: none;
-    border-top: 1px solid var(--border-default);
-    background: transparent;
-    color: var(--text-secondary);
-    font-family: var(--font-sans);
-    font-size: 13px;
-    cursor: pointer;
-    transition: all var(--transition-fast);
 }
 
-.system-actions {
+.toolbar-group {
     display: flex;
-    border-top: 1px solid var(--border-default);
+    flex-direction: column;
+    gap: 4px;
 }
 
-.deploy-toggle {
+.toolbar-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    padding: 0 4px;
+}
+
+.toolbar-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.toolbar-btn {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 14px 10px;
-    border: none;
-    background: transparent;
+    gap: 6px;
+    padding: 8px 6px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: 11px;
+    font-weight: 500;
     cursor: pointer;
     transition: all var(--transition-fast);
-    border-right: 1px solid var(--border-default);
+    white-space: nowrap;
 }
 
-.deploy-toggle:last-child {
-    border-right: none;
-}
-
-.logs-toggle:hover,
-.deploy-toggle:hover {
+.toolbar-btn:hover {
     background: var(--bg-tertiary);
     color: var(--text-primary);
+    border-color: var(--border-default);
+}
+
+.toolbar-btn:active {
+    transform: scale(0.97);
+}
+
+.toolbar-btn svg {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.toolbar-btn:hover svg {
+    opacity: 1;
 }
 
 /* ─── Main Area ─────────────────────────── */
@@ -940,13 +959,30 @@ em {
     flex-direction: column;
     z-index: 20;
     box-shadow: var(--shadow-lg);
+    transition: height 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.logs-panel.expanded {
+    height: calc(100vh);
+}
+
+.panel-expand-btn {
+    position: relative;
+}
+
+.panel-expand-btn svg {
+    transition: transform var(--transition-fast);
+}
+
+.logs-panel.expanded .panel-expand-btn svg {
+    transform: rotate(180deg);
 }
 
 .logs-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 20px;
+    padding: 18px 20px;
     border-bottom: 1px solid var(--border-default);
 }
 
@@ -1130,4 +1166,330 @@ em {
     .logs-panel {
         left: 0;
     }
+}
+
+/* ═══════════════════════════════════════════
+   Subagent — Inline Cards & Panel
+   ═══════════════════════════════════════════ */
+
+/* ── Inline Subagent Card (inside chat) ── */
+
+.subagent-card {
+    margin: 6px 0;
+    border: 1px solid rgba(255, 92, 0, 0.25);
+    border-radius: var(--radius-md);
+    background: rgba(255, 92, 0, 0.04);
+    overflow: hidden;
+    animation: message-reveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.subagent-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(255, 92, 0, 0.06);
+    border-bottom: 1px solid rgba(255, 92, 0, 0.12);
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition-fast);
+}
+
+.subagent-card-header:hover {
+    background: rgba(255, 92, 0, 0.10);
+}
+
+.subagent-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-orange);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.subagent-card-title .icon {
+    font-size: 14px;
+}
+
+.subagent-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.subagent-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    letter-spacing: 0.3px;
+}
+
+.subagent-status.ok {
+    background: rgba(0, 255, 127, 0.12);
+    color: var(--accent-green);
+}
+
+.subagent-status.error {
+    background: rgba(255, 60, 60, 0.12);
+    color: var(--accent-red);
+}
+
+.subagent-status.running {
+    background: rgba(0, 212, 255, 0.12);
+    color: var(--accent-blue);
+    animation: pulse-live 1.5s ease-in-out infinite;
+}
+
+.subagent-duration {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.subagent-card-body {
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.subagent-card-body.hidden {
+    display: none;
+}
+
+.subagent-task-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+}
+
+/* ── Subagent Iteration Block ── */
+
+.subagent-iteration {
+    margin-bottom: 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.subagent-iter-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--bg-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition-fast);
+}
+
+.subagent-iter-header:hover {
+    background: var(--bg-hover);
+}
+
+.subagent-iter-header .chevron {
+    font-size: 9px;
+    color: var(--text-muted);
+    transition: transform var(--transition-fast);
+}
+
+.subagent-iter-header .chevron.open {
+    transform: rotate(90deg);
+}
+
+.subagent-iter-body {
+    padding: 10px;
+}
+
+.subagent-iter-body.hidden {
+    display: none;
+}
+
+.subagent-model-resp {
+    font-size: 12.5px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    background: rgba(0, 212, 255, 0.04);
+    border-left: 2px solid var(--accent-blue);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.subagent-tc {
+    margin-top: 6px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.subagent-tc-name {
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--accent-orange);
+    background: rgba(255, 92, 0, 0.05);
+    border-bottom: 1px solid var(--border-muted);
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background var(--transition-fast);
+}
+
+.subagent-tc-name:hover {
+    background: rgba(255, 92, 0, 0.10);
+}
+
+.subagent-tc-detail {
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg-primary);
+}
+
+.subagent-tc-detail.hidden {
+    display: none;
+}
+
+.subagent-tc-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin: 6px 0 3px;
+}
+
+.subagent-tc-label:first-child {
+    margin-top: 0;
+}
+
+/* ── Subagent Final Result ── */
+
+.subagent-final-result {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: rgba(0, 255, 127, 0.04);
+    border: 1px solid rgba(0, 255, 127, 0.15);
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    color: var(--text-primary);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.subagent-final-result.error {
+    background: rgba(255, 60, 60, 0.04);
+    border-color: rgba(255, 60, 60, 0.15);
+}
+
+/* ── Subagent Panel (bottom panel, like Docker Logs) ── */
+
+.subagent-panel-theme .logs-header h3 {
+    color: var(--accent-orange);
+}
+
+.subagent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.subagent-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.subagent-list-item:hover {
+    background: var(--bg-hover);
+}
+
+.subagent-list-item.active {
+    background: rgba(255, 92, 0, 0.06);
+    border-left: 2px solid var(--accent-orange);
+}
+
+.subagent-list-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.subagent-list-id {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+.subagent-list-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.subagent-panel-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.subagent-panel-sidebar {
+    width: 280px;
+    min-width: 280px;
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+}
+
+.subagent-panel-detail {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+}
+
+.subagent-panel-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* Deploy panel extra theme */
+.deploy-panel-theme .live-badge {
+    color: var(--accent-blue);
+}
+
+.deploy-live-badge {
+    color: var(--accent-blue) !important;
 }
