@@ -65,9 +65,11 @@ async def stream_deploy():
                 await process.wait()
                 
                 if process.returncode == 0:
-                    yield f"data: {json.dumps({'line': '\\n\\n[SUCCESS] Deployment completed successfully!', 'done': True})}\n\n"
+                    payload = json.dumps({'line': '\n\n[SUCCESS] Deployment completed successfully!', 'done': True})
+                    yield f"data: {payload}\n\n"
                 else:
-                    yield f"data: {json.dumps({'line': f'\\n\\n[ERROR] Process exited with code {process.returncode}', 'error': True, 'done': True})}\n\n"
+                    payload = json.dumps({'line': f'\n\n[ERROR] Process exited with code {process.returncode}', 'error': True, 'done': True})
+                    yield f"data: {payload}\n\n"
 
             except asyncio.CancelledError:
                 yield f"data: {json.dumps({'line': '[WARNING] Request cancelled but deployment might still be running locally.', 'error': True})}\n\n"
@@ -135,9 +137,11 @@ async def stream_restart():
                 await process.wait()
                 
                 if process.returncode == 0:
-                    yield f"data: {json.dumps({'line': '\\n\\n[SUCCESS] Restart completed successfully!', 'done': True})}\n\n"
+                    payload = json.dumps({'line': '\n\n[SUCCESS] Restart completed successfully!', 'done': True})
+                    yield f"data: {payload}\n\n"
                 else:
-                    yield f"data: {json.dumps({'line': f'\\n\\n[ERROR] Process exited with code {process.returncode}', 'error': True, 'done': True})}\n\n"
+                    payload = json.dumps({'line': f'\n\n[ERROR] Process exited with code {process.returncode}', 'error': True, 'done': True})
+                    yield f"data: {payload}\n\n"
 
             except asyncio.CancelledError:
                 yield f"data: {json.dumps({'line': '[WARNING] Request cancelled but restart might still be running locally.', 'error': True})}\n\n"
