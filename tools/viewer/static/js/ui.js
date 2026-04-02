@@ -15,7 +15,11 @@ export const UI = {
         get search() { return document.getElementById('search-input'); },
         get count() { return document.getElementById('session-count'); },
         get badgeCount() { return document.getElementById('message-count-badge'); },
-        get channelFilters() { return document.getElementById('channel-filters'); }
+        get channelFilters() { return document.getElementById('channel-filters'); },
+        get deployPanel() { return document.getElementById('deploy-panel'); },
+        get deployToggle() { return document.getElementById('deploy-toggle'); },
+        get restartToggle() { return document.getElementById('restart-toggle'); },
+        get deployContent() { return document.getElementById('deploy-content'); }
     },
 
     escapeHtml(str) {
@@ -398,6 +402,27 @@ export const UI = {
 
     setLiveIndicator(active) {
         const badge = document.getElementById('live-badge');
+        if (badge) badge.classList.toggle('hidden', !active);
+    },
+
+    appendDeployLine(line, isError) {
+        if (!this.dom.deployContent) return;
+        const div = document.createElement('div');
+        div.className = 'log-line' + (isError || (line && line.includes('[ERROR]')) ? ' error' : '');
+        div.textContent = line;
+        this.dom.deployContent.appendChild(div);
+
+        const el = this.dom.deployContent;
+        const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        if (isNearBottom) el.scrollTop = el.scrollHeight;
+    },
+
+    clearDeployLogs() {
+        if (this.dom.deployContent) this.dom.deployContent.innerHTML = '';
+    },
+
+    setDeployLiveIndicator(active) {
+        const badge = document.getElementById('deploy-badge');
         if (badge) badge.classList.toggle('hidden', !active);
     },
 

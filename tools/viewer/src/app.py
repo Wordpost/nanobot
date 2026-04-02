@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .config import PORT, HOST, SESSIONS_DIR, CONTAINER_NAME, STATIC_DIR, print_banner
-from .routes import sessions, logs
+from .routes import sessions, logs, system
 from .schemas import AppConfig
 
 app = FastAPI(title="Nanobot Forensic Viewer", version="2.1.0")
@@ -15,6 +15,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # Routes
 app.include_router(sessions.router)
 app.include_router(logs.router)
+app.include_router(system.router)
 
 
 @app.get("/")

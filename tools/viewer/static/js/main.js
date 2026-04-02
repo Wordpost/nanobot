@@ -8,6 +8,7 @@ import { Router } from './router.js';
 
 let logStream = null;
 let sessionWatcher = null;
+let deployStream = null;
 
 async function init() {
     try {
@@ -95,6 +96,62 @@ function stopLogStream() {
     UI.setLiveIndicator(false);
 }
 
+// ── System Deploy Stream (SSE) ──────────────────────────────
+
+function startDeployStream() {
+    stopDeployStream();
+    UI.clearDeployLogs();
+    UI.setDeployLiveIndicator(true);
+
+    deployStream = API.streamDeploy((line, isError, isDone) => {
+        UI.appendDeployLine(line, isError);
+        if (isDone) {
+            UI.setDeployLiveIndicator(false);
+            if (deployStream) {
+                deployStream.close();
+                deployStream = null;
+            }
+        }
+    }, () => {
+        UI.setDeployLiveIndicator(false);
+        if (deployStream) {
+            deployStream.close();
+            deployStream = null;
+        }
+    });
+}
+
+function startRestartStream() {
+    stopDeployStream(); // re-use properties
+    UI.clearDeployLogs();
+    UI.setDeployLiveIndicator(true);
+
+    deployStream = API.streamRestart((line, isError, isDone) => {
+        UI.appendDeployLine(line, isError);
+        if (isDone) {
+            UI.setDeployLiveIndicator(false);
+            if (deployStream) {
+                deployStream.close();
+                deployStream = null;
+            }
+        }
+    }, () => {
+        UI.setDeployLiveIndicator(false);
+        if (deployStream) {
+            deployStream.close();
+            deployStream = null;
+        }
+    });
+}
+
+function stopDeployStream() {
+    if (deployStream) {
+        deployStream.close();
+        deployStream = null;
+    }
+    UI.setDeployLiveIndicator(false);
+}
+
 // Expose for Router.loadLogs
 window.__nanobot_startLogStream = startLogStream;
 
@@ -139,6 +196,22 @@ function setupEventListeners() {
     document.getElementById('btn-close-logs')?.addEventListener('click', () => {
         UI.dom.logsPanel?.classList.add('hidden');
         stopLogStream();
+    });
+
+    // Deploy panel open/close
+    UI.dom.deployToggle?.addEventListener('click', () => {
+        UI.dom.deployPanel?.classList.remove('hidden');
+        startDeployStream();
+    });
+
+    UI.dom.restartToggle?.addEventListener('click', () => {
+        UI.dom.deployPanel?.classList.remove('hidden');
+        startRestartStream();
+    });
+
+    document.getElementById('btn-close-deploy')?.addEventListener('click', () => {
+        UI.dom.deployPanel?.classList.add('hidden');
+        stopDeployStream();
     });
 }
 

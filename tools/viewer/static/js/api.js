@@ -57,5 +57,43 @@ export const API = {
         };
         es.onerror = () => { if (onError) onError(); };
         return es;
+    },
+
+    /**
+     * Open SSE stream for System Deployment
+     * @returns {EventSource}
+     */
+    streamDeploy(onLine, onError) {
+        const es = new EventSource('/api/system/deploy/stream');
+        es.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                onLine(data.line, data.error, data.done);
+                if (data.done) es.close();
+            } catch {
+                onLine(e.data);
+            }
+        };
+        es.onerror = () => { if (onError) onError(); };
+        return es;
+    },
+
+    /**
+     * Open SSE stream for System Restart
+     * @returns {EventSource}
+     */
+    streamRestart(onLine, onError) {
+        const es = new EventSource('/api/system/restart/stream');
+        es.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                onLine(data.line, data.error, data.done);
+                if (data.done) es.close();
+            } catch {
+                onLine(e.data);
+            }
+        };
+        es.onerror = () => { if (onError) onError(); };
+        return es;
     }
 };
