@@ -1196,16 +1196,23 @@ Global settings that apply to all channels. Configure under the `channels` secti
 
 #### Retry Behavior
 
-When a channel send operation raises an error, nanobot retries with exponential backoff:
+Retry is intentionally simple.
 
-- **Attempt 1**: Initial send
-- **Attempts 2-4**: Retry delays are 1s, 2s, 4s
-- **Attempts 5+**: Retry delay caps at 4s
-- **Transient failures** (network hiccups, temporary API limits): Retry usually succeeds
-- **Permanent failures** (invalid token, channel banned): All retries fail
+When a channel `send()` raises, nanobot retries at the channel-manager layer. By default, `channels.sendMaxRetries` is `3`, and that count includes the initial send.
+
+- **Attempt 1**: Send immediately
+- **Attempt 2**: Retry after `1s`
+- **Attempt 3**: Retry after `2s`
+- **Higher retry budgets**: Backoff continues as `1s`, `2s`, `4s`, then stays capped at `4s`
+- **Transient failures**: Network hiccups and temporary API limits often recover on the next attempt
+- **Permanent failures**: Invalid tokens, revoked access, or banned channels will exhaust the retry budget and fail cleanly
 
 > [!NOTE]
-> When a channel is completely unavailable, there's no way to notify the user since we cannot reach them through that channel. Monitor logs for "Failed to send to {channel} after N attempts" to detect persistent delivery failures.
+> This design is deliberate: channel implementations should raise on delivery failure, and the channel manager owns the shared retry policy.
+>
+> Some channels may still apply small API-specific retries internally. For example, Telegram separately retries timeout and flood-control errors before surfacing a final failure to the manager.
+>
+> If a channel is completely unreachable, nanobot cannot notify the user through that same channel. Watch logs for `Failed to send to {channel} after N attempts` to spot persistent delivery failures.
 
 ### Web Search
 
@@ -1217,17 +1224,30 @@ When a channel send operation raises an error, nanobot retries with exponential 
 
 nanobot supports multiple web search providers. Configure in `~/.nanobot/config.json` under `tools.web.search`.
 
+By default, web tools are enabled and web search uses `duckduckgo`, so search works out of the box without an API key.
+
+If you want to disable all built-in web tools entirely, set `tools.web.enable` to `false`. This removes both `web_search` and `web_fetch` from the tool list sent to the LLM.
+
 | Provider | Config fields | Env var fallback | Free |
 |----------|--------------|------------------|------|
-| `brave` (default) | `apiKey` | `BRAVE_API_KEY` | No |
+| `brave` | `apiKey` | `BRAVE_API_KEY` | No |
 | `tavily` | `apiKey` | `TAVILY_API_KEY` | No |
 | `jina` | `apiKey` | `JINA_API_KEY` | Free tier (10M tokens) |
 | `searxng` | `baseUrl` | `SEARXNG_BASE_URL` | Yes (self-hosted) |
-| `duckduckgo` | — | — | Yes |
+| `duckduckgo` (default) | — | — | Yes |
 
-When credentials are missing, nanobot automatically falls back to DuckDuckGo.
+**Disable all built-in web tools:**
+```json
+{
+  "tools": {
+    "web": {
+      "enable": false
+    }
+  }
+}
+```
 
-**Brave** (default):
+**Brave:**
 ```json
 {
   "tools": {
@@ -1298,7 +1318,14 @@ When credentials are missing, nanobot automatically falls back to DuckDuckGo.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `provider` | string | `"brave"` | Search backend: `brave`, `tavily`, `jina`, `searxng`, `duckduckgo` |
+| `enable` | boolean | `true` | Enable or disable all built-in web tools (`web_search` + `web_fetch`) |
+| `proxy` | string or null | `null` | Proxy for all web requests, for example `http://127.0.0.1:7890` |
+
+#### `tools.web.search`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `provider` | string | `"duckduckgo"` | Search backend: `brave`, `tavily`, `jina`, `searxng`, `duckduckgo` |
 | `apiKey` | string | `""` | API key for Brave or Tavily |
 | `baseUrl` | string | `""` | Base URL for SearXNG |
 | `maxResults` | integer | `5` | Results per search (1–10) |
