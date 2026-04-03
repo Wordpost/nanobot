@@ -21,8 +21,17 @@ def _get_config_path(agent: Optional[str] = None):
 @router.get("/")
 async def get_full_config(agent: Optional[str] = Query(None)):
     """Returns the full nanobot configuration as JSON."""
+    if not agent and resolve_workspace.__module__.endswith(".config") and any(os.getenv("NANOBOT_POOL_DIR", "").strip() for _ in [1]):
+        from ..config import POOL_MODE
+        if POOL_MODE:
+             return {"message": "Please select a specific agent to view its config.json."}
+
     try:
         path = _get_config_path(agent)
+    except HTTPException as e:
+        if e.status_code == 400 and "Agent parameter required" in str(e.detail):
+             return {"message": "Please select a specific agent to view its config.json."}
+        raise
         if not path.exists():
             raise HTTPException(status_code=404, detail=f"config.json not found: {path}")
 
@@ -38,9 +47,17 @@ async def get_full_config(agent: Optional[str] = Query(None)):
 @router.post("/")
 async def save_full_config(request: Request, agent: Optional[str] = Query(None)):
     """Saves the provided JSON document back to config.json."""
+    if not agent and resolve_workspace.__module__.endswith(".config") and any(os.getenv("NANOBOT_POOL_DIR", "").strip() for _ in [1]):
+        from ..config import POOL_MODE
+        if POOL_MODE:
+             raise HTTPException(status_code=400, detail="Cannot save config for 'All Agents'. Please select a specific agent.")
+
     try:
-        data = await request.json()
         path = _get_config_path(agent)
+    except HTTPException as e:
+        if e.status_code == 400 and "Agent parameter required" in str(e.detail):
+             raise HTTPException(status_code=400, detail="Please select a specific agent.")
+        raise
 
         if not path.exists():
             raise HTTPException(status_code=404, detail="config.json not found on backend. Cannot overwrite.")

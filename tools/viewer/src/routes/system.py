@@ -29,11 +29,20 @@ def _sse_response(generator):
     )
 
 
+def _sse_line(payload: dict) -> str:
+    """Format a single SSE data line."""
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _sse_keepalive() -> str:
+    return ": keepalive\n\n"
+
+
 async def _run_streamed_command(cmd: str, cwd: str) -> AsyncGenerator[str, None]:
-    """Execute a shell command and yield SSE lines. Shared by deploy/restart."""
+    """Execute a shell command and yield SSE lines."""
     logger.info(f"Executing from {cwd}: {cmd}")
-    yield f"data: {json.dumps({'line': f'> Working directory: {cwd}'})}\\n\\n"
-    yield f"data: {json.dumps({'line': f'> Executing: {cmd}'})}\\n\\n"
+    yield _sse_line({"line": f"> Working directory: {cwd}"})
+    yield _sse_line({"line": f"> Executing: {cmd}"})
 
     process = None
     try:
@@ -49,35 +58,31 @@ async def _run_streamed_command(cmd: str, cwd: str) -> AsyncGenerator[str, None]
                 line = await asyncio.wait_for(process.stdout.readline(), timeout=15)
                 if not line:
                     break
-                text = line.decode("utf-8", errors="replace").rstrip("\\n\\r")
-                yield f"data: {json.dumps({'line': text})}\\n\\n"
+                text = line.decode("utf-8", errors="replace").rstrip("\n\r")
+                yield _sse_line({"line": text})
             except asyncio.TimeoutError:
-                yield ": keepalive\\n\\n"
+                yield _sse_keepalive()
 
         await process.wait()
 
         if process.returncode == 0:
-            yield f"data: {json.dumps({'line': '\\n\\n[SUCCESS] Completed successfully!', 'done': True})}\\n\\n"
+            yield _sse_line({"line": "[SUCCESS] Completed successfully!", "done": True})
         else:
-            yield f"data: {json.dumps({'line': f'\\n\\n[ERROR] Process exited with code {process.returncode}', 'error': True, 'done': True})}\\n\\n"
+            yield _sse_line({"line": f"[ERROR] Process exited with code {process.returncode}", "error": True, "done": True})
 
     except asyncio.CancelledError:
-        yield f"data: {json.dumps({'line': '[WARNING] Request cancelled but process might still be running.', 'error': True})}\\n\\n"
+        yield _sse_line({"line": "[WARNING] Request cancelled.", "error": True})
     except Exception as e:
         logger.error(f"Command error: {e}")
-        yield f"data: {json.dumps({'line': f'[system-error] {e}', 'error': True, 'done': True})}\\n\\n"
+        yield _sse_line({"line": f"[system-error] {e}", "error": True, "done": True})
     finally:
         if process and process.returncode is None:
-            pass  # Let background processes finish
+            pass
 
 
 @router.get("/deploy/stream")
 async def stream_deploy():
-    """Stream deployment: git pull + rebuild all containers.
-
-    In pool mode, rebuilds ALL agents (shared codebase).
-    In single mode, rebuilds CONTAINER_NAME.
-    """
+    """Stream deployment: git pull + rebuild all containers."""
     if _deploy_lock.locked():
         raise HTTPException(status_code=429, detail="A deployment is already in progress.")
 
@@ -89,12 +94,12 @@ async def stream_deploy():
             root = str(DEPLOY_ROOT)
 
             if POOL_MODE:
-                containers = " ".join(ws.container_name for ws in WORKSPACES.values())
+                services = " ".join(ws.container_name for ws in WORKSPACES.values())
                 cmd = (
                     "cd nanobot && "
                     "git pull origin main && "
                     "cd .. && "
-                    f"docker compose up --build -d {containers}"
+                    f"docker compose up --build -d {services}"
                 )
             else:
                 cmd = (
@@ -104,7 +109,7 @@ async def stream_deploy():
                     f"docker compose up --build -d {CONTAINER_NAME}"
                 )
 
-            yield f"data: {json.dumps({'line': f'> Deploying from {root}...'})}\\n\\n"
+            yield _sse_line({"line": f"> Deploying from {root}..."})
             async for chunk in _run_streamed_command(cmd, root):
                 yield chunk
 
@@ -113,11 +118,7 @@ async def stream_deploy():
 
 @router.get("/restart/stream")
 async def stream_restart(agent: Optional[str] = Query(None)):
-    """Stream restart for a specific agent container.
-
-    In pool mode, agent param is required.
-    In single mode, restarts CONTAINER_NAME.
-    """
+    """Stream restart for a specific agent container."""
     if _deploy_lock.locked():
         raise HTTPException(status_code=429, detail="A task is already in progress.")
 
@@ -137,7 +138,7 @@ async def stream_restart(agent: Optional[str] = Query(None)):
             root = str(DEPLOY_ROOT)
             cmd = f"docker compose restart {container}"
 
-            yield f"data: {json.dumps({'line': f'> Restarting {container}...'})}\\n\\n"
+            yield _sse_line({"line": f"> Restarting {container}..."})
             async for chunk in _run_streamed_command(cmd, root):
                 yield chunk
 

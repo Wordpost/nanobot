@@ -29,11 +29,12 @@ async function init() {
 
         // Pool mode: render agent selectors in all panels
         if (config.pool_mode && config.agents?.length > 0) {
-            UI.renderAgentSelector('logs-agent-selector', config.agents);
-            UI.renderAgentSelector('restart-agent-selector', config.agents);
-            UI.renderAgentSelector('memory-agent-selector', config.agents);
-            UI.renderAgentSelector('subagent-agent-selector', config.agents);
-            UI.renderAgentSelector('config-agent-selector', config.agents);
+            const agent = state.activeAgent === 'all' ? '' : state.activeAgent;
+            UI.renderAgentSelector('logs-agent-selector', config.agents, { defaultAgent: agent });
+            UI.renderAgentSelector('restart-agent-selector', config.agents, { defaultAgent: agent });
+            UI.renderAgentSelector('memory-agent-selector', config.agents, { includeAll: true, defaultAgent: agent });
+            UI.renderAgentSelector('subagent-agent-selector', config.agents, { includeAll: true, defaultAgent: agent });
+            UI.renderAgentSelector('config-agent-selector', config.agents, { defaultAgent: agent });
         }
 
         Router.init();
@@ -91,7 +92,7 @@ function startLogStream() {
     UI.clearLogs();
     UI.setLiveIndicator(true);
 
-    const agent = UI.getSelectedAgent('logs-agent-selector');
+    const agent = state.activeAgent === 'all' ? '' : state.activeAgent;
     logStream = API.streamLogs((line, isError) => {
         UI.appendLogLine(line, isError);
     }, () => {
@@ -191,14 +192,8 @@ async function openSubagentPanel(refreshOnly = false) {
         UI.dom.subagentDetailEl.innerHTML = '<div class="subagent-panel-empty">Select a subagent to view execution log</div>';
     }
 
-    const agent = UI.getSelectedAgent('subagent-agent-selector');
+    const agent = state.activeAgent === 'all' ? '' : state.activeAgent;
     
-    // Sync internal selector with global state if needed
-    const selector = document.getElementById('subagent-agent-selector-select');
-    if (selector && state.activeAgent !== 'all' && selector.value !== state.activeAgent) {
-        selector.value = state.activeAgent;
-    }
-
     try {
         const data = await API.fetchSubagents(agent);
         UI.renderSubagentList(data.subagents);
@@ -391,6 +386,43 @@ async function loadSubagentCardDetail(taskId, containerEl) {
 // ── Event Listeners ────────────────────────────────────────
 
 function setupEventListeners() {
+    // ── Global State Sync ─────────────────────────────────────
+    state.subscribe(() => {
+        const agentValue = state.activeAgent === 'all' ? '' : state.activeAgent;
+        
+        // 1. Sync all agent selectors in the UI to match global state
+        UI.syncAgentSelectors(agentValue);
+        
+        // 2. Refresh open panels
+        if (UI.dom.logsPanel && !UI.dom.logsPanel.classList.contains('hidden')) {
+            startLogStream();
+        }
+        
+        if (UI.dom.subagentPanel && !UI.dom.subagentPanel.classList.contains('hidden')) {
+            openSubagentPanel(true);
+        }
+        
+        if (UI.dom.memoryPanel && !UI.dom.memoryPanel.classList.contains('hidden')) {
+            const activeTab = UI.dom.memoryPanel.querySelector('.memory-tab.active');
+            loadMemoryFile(activeTab?.dataset.tab || 'history');
+        }
+        
+        // 3. Sync Config Modal if open
+        if (window.configEditor && UI.dom.configPanel && UI.dom.configPanel.classList.contains('open')) {
+            window.configEditor.load();
+        }
+    });
+
+    // Listen for all agent selector changes
+    document.addEventListener('change', (e) => {
+        if (e.target.classList.contains('agent-select')) {
+            const agent = e.target.value || 'all';
+            if (state.activeAgent !== agent) {
+                state.setAgent(agent);
+            }
+        }
+    });
+
     UI.dom.search.addEventListener('input', (e) => {
         state.setSearch(e.target.value);
         UI.renderSessionList(state.filteredSessions, state.activeSession?.filename);
@@ -416,11 +448,6 @@ function setupEventListeners() {
             const agent = chip.dataset.agent;
             state.setAgent(agent);
             UI.renderSessionList(state.filteredSessions, state.activeSession?.filename);
-            
-            // Sync subagent panel if open
-            if (UI.dom.subagentPanel && !UI.dom.subagentPanel.classList.contains('hidden')) {
-                openSubagentPanel(true);
-            }
         }
     });
 
@@ -618,40 +645,18 @@ function setupEventListeners() {
         const clearBtn = e.target.closest('.btn-clear-memory');
         if (!clearBtn) return;
         const fileType = clearBtn.dataset.fileType;
+        const agent = state.activeAgent === 'all' ? '' : state.activeAgent;
         if (confirm(`Очистить содержимое ${fileType.toUpperCase()}.md? Файл не будет удалён.`)) {
-            API.clearMemoryFile(fileType, UI.getSelectedAgent('memory-agent-selector')).then(() => {
+            API.clearMemoryFile(fileType, agent).then(() => {
                 loadMemoryFile(fileType);
             }).catch(err => console.error('Clear memory error:', err));
-        }
-    });
-
-    // ── Agent Selector Change Handlers (Pool Mode) ────────
-    // Re-start streams when user switches agent
-
-    document.getElementById('logs-agent-selector')?.addEventListener('change', () => {
-        if (UI.dom.logsPanel && !UI.dom.logsPanel.classList.contains('hidden')) {
-            startLogStream();
-        }
-    });
-
-    document.getElementById('subagent-agent-selector')?.addEventListener('change', () => {
-        if (UI.dom.subagentPanel && !UI.dom.subagentPanel.classList.contains('hidden')) {
-            openSubagentPanel(true); // refresh without toggling visibility
-        }
-    });
-
-    document.getElementById('memory-agent-selector')?.addEventListener('change', () => {
-        if (UI.dom.memoryPanel && !UI.dom.memoryPanel.classList.contains('hidden')) {
-            const activeTab = UI.dom.memoryPanel.querySelector('.memory-tab.active');
-            const fileType = activeTab?.dataset.tab || 'history';
-            loadMemoryFile(fileType);
         }
     });
 }
 
 async function loadMemoryFile(fileType) {
     try {
-        const agent = UI.getSelectedAgent('memory-agent-selector');
+        const agent = state.activeAgent === 'all' ? '' : state.activeAgent;
         const data = await API.fetchMemoryFile(fileType, agent);
         UI.renderMemoryPanel(data, fileType);
     } catch (e) {

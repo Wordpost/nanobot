@@ -26,7 +26,8 @@ export const UI = {
         get subagentDetailEl() { return document.getElementById('subagent-detail'); },
         get memoryPanel() { return document.getElementById('memory-panel'); },
         get memoryToggle() { return document.getElementById('memory-toggle'); },
-        get memoryContent() { return document.getElementById('memory-content'); }
+        get memoryContent() { return document.getElementById('memory-content'); },
+        get configPanel() { return document.getElementById('config-modal'); }
     },
 
     escapeHtml(str) {
@@ -227,7 +228,6 @@ export const UI = {
 
         this.dom.sessionList.innerHTML = sessions.map((s, idx) => {
             const isActive = activeFilename === s.filename;
-            const displayKey = (s.key || s.filename).replace(/^(telegram|webhook|api|heartbeat):/, '');
             const agentBadge = s.agent
                 ? `<span class="agent-badge">${this.escapeHtml(s.agent)}</span>`
                 : '';
@@ -239,7 +239,6 @@ export const UI = {
                     <div class="session-key">
                         ${agentBadge}
                         <span class="channel-badge ${s.channel}">${s.channel}</span>
-                        <span>${this.escapeHtml(displayKey)}</span>
                     </div>
                     <div class="session-meta">
                         <span class="session-date">${s.updated_at ? this.formatDate(s.updated_at) : '...'}</span>
@@ -509,8 +508,7 @@ export const UI = {
                 <div class="subagent-item-header">
                     <span class="subagent-list-label">${this.escapeHtml(s.label || s.filename)}</span>
                     <span class="subagent-list-id">${this.escapeHtml(s.task_id)}</span>
-                </div>
-                <div class="subagent-item-footer">
+                        <div class="subagent-item-footer">
                     <div class="subagent-usage-block">
                         ${this.renderUsageBadge(s.usage)}
                     </div>
@@ -702,6 +700,17 @@ export const UI = {
         const el = this.dom.memoryContent;
         if (!el) return;
 
+        // Check if this is a "Selection Required" placeholder
+        if (data.info === 'selection_required' || (data.content && data.content.includes("Please select"))) {
+            el.innerHTML = `
+                <div class="memory-placeholder">
+                    <div class="memory-placeholder-icon">📋</div>
+                    <div class="memory-placeholder-text">${this.escapeHtml(data.content)}</div>
+                </div>
+            `;
+            return;
+        }
+
         const isEmpty = !data.content || data.content.trim() === '';
         const sizeStr = this.formatSize(data.size_bytes || 0);
 
@@ -767,14 +776,14 @@ export const UI = {
         }
 
         const agentNames = agents.map(a => typeof a === 'string' ? a : a.name);
-        const defaultVal = opts.defaultAgent || agentNames[0];
+        const defaultVal = (opts.defaultAgent !== undefined && opts.defaultAgent !== null) ? opts.defaultAgent : agentNames[0];
 
         let options = '';
         if (opts.includeAll) {
-            options += '<option value="">All Agents</option>';
+            options += `<option value="" ${defaultVal === '' ? 'selected' : ''}>All Agents</option>`;
         }
         options += agentNames.map(name =>
-            `<option value="${name}" ${name === defaultVal && !opts.includeAll ? 'selected' : ''}>${name}</option>`
+            `<option value="${name}" ${name === defaultVal ? 'selected' : ''}>${name}</option>`
         ).join('');
 
         container.innerHTML = `<select class="agent-select" id="${containerId}-select">${options}</select>`;
@@ -788,5 +797,22 @@ export const UI = {
     getSelectedAgent(containerId) {
         const select = document.getElementById(`${containerId}-select`);
         return select?.value || null;
+    },
+
+    /**
+     * Synchronize all .agent-select elements with the current agent.
+     * @param {string} agent - agent name or empty string for all
+     */
+    syncAgentSelectors(agent) {
+        const selectors = document.querySelectorAll('.agent-select');
+        selectors.forEach(s => {
+            s.value = agent === 'all' ? '' : agent;
+        });
+
+        // Also update sidebar chips
+        const chips = document.querySelectorAll('.agent-chip');
+        chips.forEach(c => {
+            c.classList.toggle('active', c.dataset.agent === agent);
+        });
     }
 };

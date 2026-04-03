@@ -31,28 +31,36 @@ export class ConfigEditor {
     }
 
     async open() {
+        this.modal.classList.add('open');
+        await this.load();
+
+        // Re-fetch on agent selector change
+        const selector = document.getElementById('config-agent-selector-select');
+        if (selector && !selector._configBound) {
+            selector._configBound = true;
+            selector.addEventListener('change', () => this.load());
+        }
+    }
+
+    async load() {
         try {
             this.saveBtn.textContent = "Loading...";
             this.saveBtn.disabled = true;
-            this.modal.classList.add('open');
 
             const agent = UI.getSelectedAgent('config-agent-selector');
             this.config = await API.fetchConfigManager(agent);
             this.render();
 
-            // Re-fetch on agent change
-            const selector = document.getElementById('config-agent-selector-select');
-            if (selector && !selector._configBound) {
-                selector._configBound = true;
-                selector.addEventListener('change', () => this.open());
-            }
-
             this.saveBtn.textContent = "Save Configuration";
-            this.saveBtn.disabled = false;
+            this.saveBtn.disabled = !this.config.message; // disabled if show placeholder msg
         } catch (err) {
             console.error(err);
-            alert("Error loading configuration: " + err.message);
-            this.close();
+            this.contentContainer.innerHTML = `<div class="config-selection-required"><p>Error: ${err.message}</p></div>`;
+            this.saveBtn.disabled = true;
+        } finally {
+            if (!this.config?.message) {
+                this.saveBtn.disabled = false;
+            }
         }
     }
 
@@ -63,7 +71,19 @@ export class ConfigEditor {
     render() {
         this.navContainer.innerHTML = '';
         this.contentContainer.innerHTML = '';
-        
+
+        if (this.config.message) {
+            this.contentContainer.innerHTML = `
+                <div class="config-selection-required">
+                    <div class="config-selection-icon">⚙️</div>
+                    <p>${this.config.message}</p>
+                </div>
+            `;
+            this.saveBtn.style.display = 'none';
+            return;
+        }
+
+        this.saveBtn.style.display = 'block';
         // Define desired top-level sections
         const sections = Object.keys(this.config);
         

@@ -28,7 +28,28 @@ def _resolve_path(file_type: str, agent: Optional[str] = None):
 @router.get("/{file_type}")
 async def get_memory_file(file_type: str, agent: Optional[str] = Query(None)):
     """Read contents of HISTORY.md or MEMORY.md."""
-    filepath = _resolve_path(file_type, agent)
+    if not agent or agent in ["", "all", "undefined"]:
+        return {
+            "file_type": file_type, 
+            "filename": "", 
+            "content": "Please select a specific agent to view history.", 
+            "size_bytes": 0,
+            "info": "selection_required"
+        }
+
+    try:
+        filepath = _resolve_path(file_type, agent)
+    except HTTPException as e:
+        if e.status_code in [400, 404]:
+             return {
+                 "file_type": file_type, 
+                 "filename": "", 
+                 "content": "Please select a valid agent in the panel header.", 
+                 "size_bytes": 0,
+                 "info": "selection_required"
+             }
+        raise
+
     if not filepath.exists():
         return {"file_type": file_type, "filename": filepath.name, "content": "", "size_bytes": 0}
 
@@ -44,9 +65,17 @@ async def get_memory_file(file_type: str, agent: Optional[str] = Query(None)):
 @router.delete("/{file_type}")
 async def clear_memory_file(file_type: str, agent: Optional[str] = Query(None)):
     """Clear file contents without deleting the file."""
-    filepath = _resolve_path(file_type, agent)
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {filepath.name}")
+    if not agent and resolve_workspace.__module__.endswith(".config") and any(os.getenv("NANOBOT_POOL_DIR", "").strip() for _ in [1]):
+        from ..config import POOL_MODE
+        if POOL_MODE:
+            raise HTTPException(status_code=400, detail="Cannot clear memory for 'All Agents'. Please select a specific agent.")
+
+    try:
+        filepath = _resolve_path(file_type, agent)
+    except HTTPException as e:
+        if e.status_code == 400 and "Agent parameter required" in str(e.detail):
+             raise HTTPException(status_code=400, detail="Please select a specific agent.")
+        raise
 
     filepath.write_text("", encoding="utf-8")
     logger.info(f"[memory] Cleared {filepath.name}")

@@ -59,6 +59,8 @@ class SubagentToolCall(BaseModel):
 
 
 class SubagentIteration(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     number: int
     model_response: Optional[str] = None
     tool_calls: List[SubagentToolCall] = []
