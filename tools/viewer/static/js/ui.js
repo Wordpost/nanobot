@@ -489,14 +489,18 @@ export const UI = {
 
         el.innerHTML = subagents.map(s => `
             <div class="subagent-list-item" data-filename="${this.escapeHtml(s.filename)}">
-                <div>
+                <div class="subagent-item-header">
                     <span class="subagent-list-label">${this.escapeHtml(s.label || s.filename)}</span>
                     <span class="subagent-list-id">${this.escapeHtml(s.task_id)}</span>
                 </div>
-                <div class="subagent-list-right">
-                    ${this.renderUsageBadge(s.usage)}
-                    <span class="subagent-status ${s.status}">${s.status === 'ok' ? '✅' : s.status === 'error' ? '❌' : '⏳'} ${s.status.toUpperCase()}</span>
-                    ${s.duration ? `<span class="subagent-duration">${this.escapeHtml(s.duration)}</span>` : ''}
+                <div class="subagent-item-footer">
+                    <div class="subagent-usage-block">
+                        ${this.renderUsageBadge(s.usage)}
+                    </div>
+                    <div class="subagent-meta-block">
+                        ${s.duration ? `<span class="subagent-duration">${this.escapeHtml(s.duration)}</span>` : ''}
+                        <span class="subagent-status ${s.status}">${s.status === 'ok' ? '✅' : s.status === 'error' ? '❌' : '⏳'} ${s.status.toUpperCase()}</span>
+                    </div>
                 </div>
             </div>
         `).join('');

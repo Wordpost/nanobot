@@ -123,6 +123,11 @@ class WebhookChannel(BaseChannel):
             logger.error("Received non-JSON content on webhook")
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
+        # Swarm inter-agent payload detection (fork-local)
+        if self._is_swarm_payload(body):
+            return await self._handle_swarm_message(body)
+
+        # Standard webhook processing
         text, sender, chat_id = self._extract_payload(body)
 
         await self._handle_message(
@@ -133,6 +138,73 @@ class WebhookChannel(BaseChannel):
         )
 
         return web.json_response({"ok": True, "sender_id": sender})
+
+    # ------------------------------------------------------------------ #
+    # Swarm inter-agent communication (fork-local)                        #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _is_swarm_payload(body: dict) -> bool:
+        """Detect a swarm handoff payload by required fields."""
+        return (
+            isinstance(body.get("chain_id"), str)
+            and isinstance(body.get("origin"), dict)
+            and isinstance(body.get("task"), str)
+        )
+
+    async def _handle_swarm_message(self, body: dict) -> web.Response:
+        """Process an incoming swarm handoff message.
+
+        Extracts machine metadata into InboundMessage.metadata (invisible to
+        the LLM) and formats the task + data as clean text for the agent.
+        Routes the message to a session scoped by chain_id so subsequent
+        handoffs in the same chain share context.
+        """
+        task = body.get("task", "")
+        data = body.get("data")
+        msg_type = body.get("type", "task")
+        origin = body.get("origin", {})
+        chain_id = body.get("chain_id", "default")
+
+        # Build LLM-visible content
+        content_parts: list[str] = [task]
+        if data:
+            if isinstance(data, str) and data.strip():
+                content_parts.append(f"\nДанные:\n{data}")
+            elif isinstance(data, (dict, list)):
+                content_parts.append(
+                    f"\nДанные:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+                )
+        text = "\n".join(content_parts)
+
+        # Machine metadata — accessible to HandoffTool, hidden from LLM
+        metadata = {
+            "_swarm": True,
+            "_chain_id": chain_id,
+            "_hop_count": body.get("hop_count", 0),
+            "_origin": origin,
+            "_human": body.get("human", {}),
+            "_type": msg_type,
+        }
+
+        sender = origin.get("agent", "swarm")
+        session_key = f"swarm:{chain_id}"
+
+        logger.info(
+            "Swarm {} from '{}' (chain={}, hop={}): {}",
+            msg_type, sender, chain_id,
+            body.get("hop_count", 0), task[:80],
+        )
+
+        await self._handle_message(
+            sender_id=sender,
+            chat_id=session_key,
+            content=text,
+            media=[],
+            metadata=metadata,
+        )
+
+        return web.json_response({"ok": True, "swarm": True, "chain_id": chain_id})
 
     def _render_template(self, template_str: str | None, data: dict) -> str:
         """

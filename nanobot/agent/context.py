@@ -29,6 +29,10 @@ class ContextBuilder:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
 
+        # Swarm instructions (fork-local)
+        if (self.workspace / "swarm.json").exists():
+            parts.append(self._get_swarm_instructions())
+
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
@@ -73,9 +77,7 @@ Skills with available="false" need dependencies installed first - you can try in
 - Use file tools when they are simpler or more reliable than shell commands.
 """
 
-        return f"""# nanobot 🐈
-
-You are nanobot, a helpful AI assistant.
+        return f"""You are a helpful AI assistant.
 
 ## Runtime
 {runtime}
@@ -88,7 +90,7 @@ Your workspace is at: {workspace_path}
 
 {platform_policy}
 
-## nanobot Guidelines
+## Guidelines
 - State intent before tool calls, but NEVER predict or claim results before receiving them.
 - Before modifying a file, read it first. Do not assume files or directories exist.
 - After writing or editing a file, re-read it if accuracy matters.
@@ -99,6 +101,14 @@ Your workspace is at: {workspace_path}
 
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel.
 IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST call the 'message' tool with the 'media' parameter. Do NOT use read_file to "send" a file — reading a file only shows its content to you, it does NOT deliver the file to the user. Example: message(content="Here is the file", media=["/path/to/file.png"])"""
+
+    def _get_swarm_instructions(self) -> str:
+        """Instructions for the agent when operating in a swarm (fork-local)."""
+        return """# Swarm Mode (Active)
+- Use `handoff` to delegate tasks (`type="task"`) or return results (`type="result"`).
+- Always pass state/data via the `data` parameter (JSON).
+- If in a swarm chain, prioritize returning findings to peers over chatting with the human."""
+
 
     @staticmethod
     def _build_runtime_context(
