@@ -1699,3 +1699,52 @@ em {
     font-family: var(--font-sans);
     font-size: 13px;
 }
+
+/* ── Token Usage Badge ───────────────────────────── */
+.usage-badge {
+    position: absolute;
+    top: -12px;
+    right: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--accent);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-default);
+    cursor: default;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.usage-badge:hover {
+    background: rgba(255, 136, 0, 0.15);
+    border-color: rgba(255, 136, 0, 0.3);
+}
+
+.usage-badge svg {
+    opacity: 0.7;
+    flex-shrink: 0;
+}
+
+.usage-cached,
+.usage-reqs {
+    display: inline-flex;
+    align-items: center;
+    font-size: 9px;
+    padding-left: 3px;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    margin-left: 2px;
+}
+
+.usage-cached {
+    color: #4ec9b0;
+}
+
+.usage-reqs {
+    color: #9cdcfe;
+}

@@ -38,7 +38,7 @@ export const UI = {
 
     renderContent(content) {
         if (!content) return '';
-        
+
         // If content is an object, try to unwrap common string fields
         if (typeof content !== 'string') {
             const unwrapped = content.content || content.output || content.result || content.stdout || content.text;
@@ -48,7 +48,7 @@ export const UI = {
                 return `<pre>${this.escapeHtml(JSON.stringify(content, null, 2))}</pre>`;
             }
         }
-        
+
         return this.renderMarkdown(content);
     },
 
@@ -129,7 +129,7 @@ export const UI = {
                 if (tableLines.length > 0) {
                     let html = '<div class="md-table-wrapper"><table class="md-table">';
                     let hasHeader = false;
-                    
+
                     // Check for separator line |---|
                     if (tableLines.length > 1 && tableLines[1].content.trim().startsWith('---')) {
                         hasHeader = true;
@@ -148,12 +148,12 @@ export const UI = {
                         const tag = (hasHeader && idx === 0) ? 'th' : 'td';
                         if (idx === 0 && hasHeader) html += '<thead>';
                         if (idx === 2 && hasHeader || idx === 0 && !hasHeader) html += '<tbody>';
-                        
+
                         html += '<tr>' + cleanCells.map(c => `<${tag}>${this.renderInline(c)}</${tag}>`).join('') + '</tr>';
-                        
+
                         if (idx === 0 && hasHeader) html += '</thead>';
                     });
-                    
+
                     html += '</tbody></table></div>';
                     out.push(html);
                     continue;
@@ -214,7 +214,7 @@ export const UI = {
 
     renderSessionList(sessions, activeFilename) {
         if (!this.dom.sessionList) return;
-        
+
         if (sessions.length === 0) {
             this.dom.sessionList.innerHTML = `
                 <div class="empty-list">
@@ -228,7 +228,7 @@ export const UI = {
         this.dom.sessionList.innerHTML = sessions.map((s, idx) => {
             const isActive = activeFilename === s.filename;
             const displayKey = (s.key || s.filename).replace(/^(telegram|webhook|api|heartbeat):/, '');
-            
+
             return `
                 <div class="session-item ${isActive ? 'active' : ''}" 
                      data-filename="${s.filename}"
@@ -270,7 +270,7 @@ export const UI = {
     renderMessages(session) {
         this.dom.emptyState.classList.add('hidden');
         this.dom.chatView.classList.remove('hidden');
-        
+
         const displayKey = (session.metadata.key || '').replace(/^(telegram|webhook|api|heartbeat):/, '');
         const titleEl = document.getElementById('chat-title');
         const metaEl = document.getElementById('chat-meta');
@@ -292,12 +292,13 @@ export const UI = {
             // Detect spawn tool call → render inline subagent card
             const spawnCard = this.renderSpawnCard(m);
             if (spawnCard) return spawnCard;
-            
+
             return `
                 <div class="message ${role}" style="--j: ${idx}" data-msg-index="${idx}">
                     <div class="message-header ${role === 'tool' ? 'tool-toggle' : ''}">
                         <span class="message-role">${role}</span>
                         <div class="message-header-right">
+                            ${this.renderUsageBadge(m.usage)}
                             <span class="message-time">${time}</span>
                             <button class="btn-delete-msg" data-msg-index="${idx}" title="Удалить сообщение">
                                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -325,7 +326,7 @@ export const UI = {
 
     addMessageInteractivity() {
         if (!this.dom.messages || this._interactionsBound) return;
-        
+
         this.dom.messages.addEventListener('click', (e) => {
             // Handle reasoning toggle
             const reasoningToggle = e.target.closest('.reasoning-toggle');
@@ -656,19 +657,19 @@ export const UI = {
     formatDate(ds) {
         const d = this.parseDate(ds);
         if (!d) return ds || '...';
-        
+
         const now = new Date();
         const diff = (now - d) / 1000;
         if (diff < 60) return 'Just now';
-        if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-        if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
         return d.toLocaleDateString();
     },
 
     formatSize(bytes) {
         if (bytes < 1024) return bytes + ' B';
-        if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
-        return (bytes/1048576).toFixed(1) + ' MB';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
     },
 
     // ── Memory Panel ────────────────────────────────────────
@@ -692,6 +693,34 @@ export const UI = {
                 ? '<div class="memory-empty">Файл пуст</div>'
                 : `<pre>${this.escapeHtml(data.content)}</pre>`
             }</div>
+        `;
+    },
+
+    renderUsageBadge(usage) {
+        if (!usage) return '';
+        const prompt = usage.prompt_tokens || 0;
+        const completion = usage.completion_tokens || 0;
+        const cached = usage.cached_tokens || 0;
+        const reqs = usage.requests || 0;
+        const total = prompt + completion;
+        if (total === 0) return '';
+
+        const cachedPct = (cached && prompt) ? Math.round((cached / prompt) * 100) : 0;
+        const cachedHtml = cachedPct > 0
+            ? `<span class="usage-cached" title="Cached tokens">${cachedPct}% cached</span>`
+            : '';
+        const reqsHtml = reqs > 0
+            ? `<span class="usage-reqs" title="API requests made"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="margin-right: 2px;"><path d="M2 5l6 3 6-3-6-3-6 3z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 8l6 3 6-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11l6 3 6-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>${reqs}</span>`
+            : '';
+        const totalStr = total >= 1000 ? (total / 1000).toFixed(1) + 'k' : total;
+
+        return `
+            <span class="usage-badge" title="Prompt: ${prompt} | Completion: ${completion}${cached ? ' | Cached: ' + cached : ''}">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><path d="M8 4v4l3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                ${totalStr}
+                ${cachedHtml}
+                ${reqsHtml}
+            </span>
         `;
     }
 };

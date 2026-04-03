@@ -536,6 +536,7 @@ class AgentLoop:
                 message_id=msg.metadata.get("message_id"),
             )
             self._save_turn(session, all_msgs, 1 + len(history))
+            self._append_usage_record(session, self._last_usage)
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
@@ -593,6 +594,7 @@ class AgentLoop:
             final_content = EMPTY_FINAL_RESPONSE_MESSAGE
 
         self._save_turn(session, all_msgs, 1 + len(history))
+        self._append_usage_record(session, self._last_usage)
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
@@ -684,6 +686,20 @@ class AgentLoop:
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
         session.updated_at = datetime.now()
+
+    def _append_usage_record(self, session: Session, usage: dict[str, int] | None) -> None:
+        """Persist token usage metrics as a special record in the session (fork-local)."""
+        if not usage:
+            return
+        from datetime import datetime
+        session.messages.append({
+            "_type": "usage",
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "cached_tokens": usage.get("cached_tokens", 0),
+            "timestamp": datetime.now().isoformat(),
+        })
 
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
         """Persist the latest in-flight turn state into session metadata."""

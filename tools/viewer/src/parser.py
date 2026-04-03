@@ -70,6 +70,27 @@ class SessionParser:
                 metadata.update({k: v for k, v in obj.items() if k != "messages"})
                 if "messages" in obj:
                     messages.extend(obj["messages"])
+            elif obj.get("_type") == "usage":
+                # Dynamically count requests for this turn by inspecting the session graph.
+                # Every LLM request generated an 'assistant' message. We count backward to the 'user' turn.
+                requests_count = 0
+                for m in reversed(messages):
+                    if m.get("role") == "assistant":
+                        requests_count += 1
+                    elif m.get("role") == "user":
+                        break
+
+                # Attach usage to the last assistant message in the list
+                for m in reversed(messages):
+                    if m.get("role") == "assistant":
+                        usage_data = {
+                            k: obj[k] for k in
+                            ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
+                            if k in obj
+                        }
+                        usage_data["requests"] = requests_count
+                        m["usage"] = usage_data
+                        break
             elif "role" in obj:
                 messages.append(obj)
             elif "messages" in obj:

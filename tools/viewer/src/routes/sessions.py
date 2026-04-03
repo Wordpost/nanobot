@@ -153,7 +153,8 @@ async def delete_messages(filename: str, body: DeleteMessagesRequest):
 
     parser = SessionParser(filepath)
     metadata_obj = None
-    messages = []
+    # Collect all rows preserving order: messages and non-metadata special records
+    rows: list = []
 
     for obj in parser.stream_objects():
         if not isinstance(obj, dict):
@@ -161,29 +162,33 @@ async def delete_messages(filename: str, body: DeleteMessagesRequest):
         if obj.get("_type") == "metadata":
             metadata_obj = obj
         elif "role" in obj:
-            messages.append(obj)
+            rows.append(obj)
+        elif obj.get("_type"):
+            # Preserve special records (_type: "usage", etc.)
+            rows.append(obj)
         elif "messages" in obj:
             metadata_obj = {k: v for k, v in obj.items() if k != "messages"}
-            messages.extend(obj["messages"])
+            rows.extend(obj["messages"])
 
-    max_idx = len(messages) - 1
+    # Build index mapping only for actual messages (have "role")
+    msg_indices = [i for i, r in enumerate(rows) if "role" in r]
+    max_idx = len(msg_indices) - 1
     invalid = [i for i in indices_set if i < 0 or i > max_idx]
     if invalid:
         raise HTTPException(status_code=400, detail=f"Invalid indices: {invalid}. Max index: {max_idx}")
 
-    kept = [m for i, m in enumerate(messages) if i not in indices_set]
-    deleted_count = len(messages) - len(kept)
+    delete_row_indices = {msg_indices[i] for i in indices_set}
+    kept = [r for i, r in enumerate(rows) if i not in delete_row_indices]
+    deleted_count = len(delete_row_indices)
 
-    # Update metadata timestamp
     if metadata_obj:
         metadata_obj["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-    # Rewrite file: metadata line + one message per line
     with open(filepath, "w", encoding="utf-8") as f:
         if metadata_obj:
             f.write(json.dumps(metadata_obj, ensure_ascii=False) + "\n")
-        for m in kept:
-            f.write(json.dumps(m, ensure_ascii=False) + "\n")
+        for r in kept:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     logger.info(f"[sessions] Deleted {deleted_count} message(s) from {filename}")
-    return {"status": "ok", "deleted": deleted_count, "remaining": len(kept)}
+    return {"status": "ok", "deleted": deleted_count, "remaining": len(kept) - sum(1 for r in kept if r.get("_type"))}
