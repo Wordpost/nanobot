@@ -1,4 +1,5 @@
 import { API } from './api.js';
+import { UI } from './ui.js';
 
 export class ConfigEditor {
     constructor() {
@@ -34,10 +35,18 @@ export class ConfigEditor {
             this.saveBtn.textContent = "Loading...";
             this.saveBtn.disabled = true;
             this.modal.classList.add('open');
-            
-            this.config = await API.fetchConfigManager();
+
+            const agent = UI.getSelectedAgent('config-agent-selector');
+            this.config = await API.fetchConfigManager(agent);
             this.render();
-            
+
+            // Re-fetch on agent change
+            const selector = document.getElementById('config-agent-selector-select');
+            if (selector && !selector._configBound) {
+                selector._configBound = true;
+                selector.addEventListener('change', () => this.open());
+            }
+
             this.saveBtn.textContent = "Save Configuration";
             this.saveBtn.disabled = false;
         } catch (err) {
@@ -307,7 +316,8 @@ export class ConfigEditor {
                 current[key] = val;
             });
             
-            await API.saveConfigManager(newConfig);
+            const agent = UI.getSelectedAgent('config-agent-selector');
+            await API.saveConfigManager(newConfig, agent);
             
             this.saveBtn.textContent = 'Saved!';
             this.config = newConfig; // update local representation

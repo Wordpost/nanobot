@@ -23,9 +23,18 @@ async function init() {
             filteredSessions: initial.sessions
         });
 
-        UI.renderFilters(state.sessions);
+        UI.renderFilters(state.sessions, config);
         UI.renderSessionList(state.filteredSessions);
         if (UI.dom.count) UI.dom.count.textContent = initial.total;
+
+        // Pool mode: render agent selectors in all panels
+        if (config.pool_mode && config.agents?.length > 0) {
+            UI.renderAgentSelector('logs-agent-selector', config.agents);
+            UI.renderAgentSelector('restart-agent-selector', config.agents);
+            UI.renderAgentSelector('memory-agent-selector', config.agents);
+            UI.renderAgentSelector('subagent-agent-selector', config.agents);
+            UI.renderAgentSelector('config-agent-selector', config.agents);
+        }
 
         Router.init();
         setupEventListeners();
@@ -82,6 +91,7 @@ function startLogStream() {
     UI.clearLogs();
     UI.setLiveIndicator(true);
 
+    const agent = UI.getSelectedAgent('logs-agent-selector');
     logStream = API.streamLogs((line, isError) => {
         UI.appendLogLine(line, isError);
     }, () => {
@@ -91,7 +101,7 @@ function startLogStream() {
                 startLogStream();
             }
         }, 3000);
-    });
+    }, agent);
 }
 
 function stopLogStream() {
@@ -107,6 +117,8 @@ function stopLogStream() {
 function startDeployStream() {
     stopDeployStream();
     UI.clearDeployLogs();
+    UI.dom.deployPanel?.classList.remove('hidden');
+    UI.dom.deployToggle?.classList.add('active');
     UI.setDeployLiveIndicator(true);
 
     deployStream = API.streamDeploy((line, isError, isDone) => {
@@ -128,8 +140,15 @@ function startDeployStream() {
 }
 
 function startRestartStream() {
-    stopDeployStream(); // re-use properties
+    const agent = UI.getSelectedAgent('restart-agent-selector');
+    if (!agent) {
+        alert('Please select an agent to restart.');
+        return;
+    }
+
+    stopDeployStream();
     UI.clearDeployLogs();
+    UI.dom.deployPanel?.classList.remove('hidden');
     UI.setDeployLiveIndicator(true);
 
     deployStream = API.streamRestart((line, isError, isDone) => {
@@ -147,7 +166,7 @@ function startRestartStream() {
             deployStream.close();
             deployStream = null;
         }
-    });
+    }, agent);
 }
 
 function stopDeployStream() {
@@ -160,27 +179,40 @@ function stopDeployStream() {
 
 // ── Subagent Panel ──────────────────────────────────────────
 
-async function openSubagentPanel() {
-    UI.dom.subagentPanel?.classList.remove('hidden');
-    const badge = document.getElementById('subagent-badge');
-    if (badge) badge.classList.remove('hidden');
+async function openSubagentPanel(refreshOnly = false) {
+    if (!refreshOnly) {
+        UI.dom.subagentPanel?.classList.remove('hidden');
+        const badge = document.getElementById('subagent-badge');
+        if (badge) badge.classList.remove('hidden');
+    }
+    
+    // Always clear detail view when switching/opening panel
+    if (UI.dom.subagentDetailEl) {
+        UI.dom.subagentDetailEl.innerHTML = '<div class="subagent-panel-empty">Select a subagent to view execution log</div>';
+    }
 
-    // Initial load
+    const agent = UI.getSelectedAgent('subagent-agent-selector');
+    
+    // Sync internal selector with global state if needed
+    const selector = document.getElementById('subagent-agent-selector-select');
+    if (selector && state.activeAgent !== 'all' && selector.value !== state.activeAgent) {
+        selector.value = state.activeAgent;
+    }
+
     try {
-        const data = await API.fetchSubagents();
+        const data = await API.fetchSubagents(agent);
         UI.renderSubagentList(data.subagents);
     } catch (e) {
         console.error('Failed to load subagents:', e);
     }
 
-    // Start watcher
     stopSubagentWatcher();
     subagentWatcher = API.watchSubagents((data) => {
         UI.renderSubagentList(data.subagents);
     }, () => {
         const badge = document.getElementById('subagent-badge');
         if (badge) badge.classList.add('hidden');
-    });
+    }, agent);
 }
 
 function closeSubagentPanel() {
@@ -365,13 +397,30 @@ function setupEventListeners() {
     });
 
     UI.dom.channelFilters?.addEventListener('click', (e) => {
-        const chip = e.target.closest('.channel-chip');
+        const chip = e.target.closest('.channel-chip:not(.agent-chip)');
         if (chip) {
             UI.dom.channelFilters.querySelectorAll('.channel-chip')
                 .forEach(b => b.classList.remove('active'));
             chip.classList.add('active');
             state.setChannel(chip.dataset.channel);
             UI.renderSessionList(state.filteredSessions, state.activeSession?.filename);
+        }
+    });
+
+    document.getElementById('agent-filters')?.addEventListener('click', (e) => {
+        const chip = e.target.closest('.agent-chip');
+        if (chip) {
+            document.querySelectorAll('.agent-chip')
+                .forEach(b => b.classList.remove('active'));
+            chip.classList.add('active');
+            const agent = chip.dataset.agent;
+            state.setAgent(agent);
+            UI.renderSessionList(state.filteredSessions, state.activeSession?.filename);
+            
+            // Sync subagent panel if open
+            if (UI.dom.subagentPanel && !UI.dom.subagentPanel.classList.contains('hidden')) {
+                openSubagentPanel(true);
+            }
         }
     });
 
@@ -433,61 +482,115 @@ function setupEventListeners() {
         }
     });
 
+    // Helper to close all bottom panels except one (if provided)
+    function closeAllPanels(exceptId = null) {
+        const panels = ['logs-panel', 'subagent-panel', 'memory-panel', 'deploy-panel'];
+        const toggles = ['logs-toggle', 'subagent-toggle', 'memory-toggle', 'deploy-toggle'];
+        
+        panels.forEach((id, idx) => {
+            if (id === exceptId) return;
+            const p = document.getElementById(id);
+            if (p) {
+                p.classList.add('hidden');
+                p.classList.remove('expanded');
+            }
+            const t = document.getElementById(toggles[idx]);
+            if (t) t.classList.remove('active');
+            
+            // Specific stop functions
+            if (id === 'logs-panel') stopLogStream();
+            if (id === 'deploy-panel') stopDeployStream();
+            if (id === 'subagent-panel') stopSubagentWatcher();
+        });
+    }
+
     // Logs panel open/close
     UI.dom.logsToggle?.addEventListener('click', () => {
-        UI.dom.logsPanel?.classList.toggle('hidden');
-        if (UI.dom.logsPanel && !UI.dom.logsPanel.classList.contains('hidden')) {
-            startLogStream();
-        } else {
+        const isOpen = !UI.dom.logsPanel?.classList.contains('hidden');
+        if (isOpen) {
+            UI.dom.logsPanel?.classList.add('hidden');
+            UI.dom.logsToggle?.classList.remove('active');
             stopLogStream();
+        } else {
+            closeAllPanels('logs-panel');
+            UI.dom.logsPanel?.classList.remove('hidden');
+            UI.dom.logsToggle?.classList.add('active');
+            startLogStream();
         }
     });
 
     document.getElementById('btn-close-logs')?.addEventListener('click', () => {
         UI.dom.logsPanel?.classList.add('hidden');
         UI.dom.logsPanel?.classList.remove('expanded');
+        UI.dom.logsToggle?.classList.remove('active');
         stopLogStream();
     });
 
     // Deploy panel open/close
     UI.dom.deployToggle?.addEventListener('click', () => {
-        UI.dom.deployPanel?.classList.remove('hidden');
-        startDeployStream();
+        const isOpen = !UI.dom.deployPanel?.classList.contains('hidden');
+        if (isOpen) {
+            UI.dom.deployPanel?.classList.add('hidden');
+            UI.dom.deployToggle?.classList.remove('active');
+            stopDeployStream();
+        } else {
+            closeAllPanels('deploy-panel');
+            UI.dom.deployPanel?.classList.remove('hidden');
+            UI.dom.deployToggle?.classList.add('active');
+            startDeployStream();
+        }
     });
 
     UI.dom.restartToggle?.addEventListener('click', () => {
-        UI.dom.deployPanel?.classList.remove('hidden');
-        startRestartStream();
+        // Toggle behavior for restart (uses deploy panel)
+        const isPanelOpen = !UI.dom.deployPanel?.classList.contains('hidden');
+        if (isPanelOpen) {
+            // Already there, just fire restart
+            startRestartStream();
+        } else {
+            closeAllPanels('deploy-panel');
+            startRestartStream();
+        }
     });
 
     document.getElementById('btn-close-deploy')?.addEventListener('click', () => {
         UI.dom.deployPanel?.classList.add('hidden');
         UI.dom.deployPanel?.classList.remove('expanded');
+        UI.dom.deployToggle?.classList.remove('active');
         stopDeployStream();
     });
 
     // Subagent panel open/close
     UI.dom.subagentToggle?.addEventListener('click', () => {
         const panel = UI.dom.subagentPanel;
-        if (panel && !panel.classList.contains('hidden')) {
+        const isOpen = panel && !panel.classList.contains('hidden');
+        if (isOpen) {
             closeSubagentPanel();
+            UI.dom.subagentToggle?.classList.remove('active');
         } else {
+            closeAllPanels('subagent-panel');
             openSubagentPanel();
+            UI.dom.subagentToggle?.classList.add('active');
         }
     });
 
     document.getElementById('btn-close-subagent')?.addEventListener('click', () => {
         closeSubagentPanel();
+        UI.dom.subagentToggle?.classList.remove('active');
     });
 
     // ── Memory Panel ──────────────────────────────────────
 
     UI.dom.memoryToggle?.addEventListener('click', () => {
         const panel = UI.dom.memoryPanel;
-        if (panel && !panel.classList.contains('hidden')) {
+        const isOpen = panel && !panel.classList.contains('hidden');
+        if (isOpen) {
             panel.classList.add('hidden');
+            UI.dom.memoryToggle?.classList.remove('active');
         } else {
+            closeAllPanels('memory-panel');
             panel?.classList.remove('hidden');
+            UI.dom.memoryToggle?.classList.add('active');
             // Load active tab
             const activeTab = panel?.querySelector('.memory-tab.active');
             const fileType = activeTab?.dataset.tab || 'history';
@@ -498,6 +601,7 @@ function setupEventListeners() {
     document.getElementById('btn-close-memory')?.addEventListener('click', () => {
         UI.dom.memoryPanel?.classList.add('hidden');
         UI.dom.memoryPanel?.classList.remove('expanded');
+        UI.dom.memoryToggle?.classList.remove('active');
     });
 
     // Memory tab switching
@@ -515,16 +619,40 @@ function setupEventListeners() {
         if (!clearBtn) return;
         const fileType = clearBtn.dataset.fileType;
         if (confirm(`Очистить содержимое ${fileType.toUpperCase()}.md? Файл не будет удалён.`)) {
-            API.clearMemoryFile(fileType).then(() => {
+            API.clearMemoryFile(fileType, UI.getSelectedAgent('memory-agent-selector')).then(() => {
                 loadMemoryFile(fileType);
             }).catch(err => console.error('Clear memory error:', err));
+        }
+    });
+
+    // ── Agent Selector Change Handlers (Pool Mode) ────────
+    // Re-start streams when user switches agent
+
+    document.getElementById('logs-agent-selector')?.addEventListener('change', () => {
+        if (UI.dom.logsPanel && !UI.dom.logsPanel.classList.contains('hidden')) {
+            startLogStream();
+        }
+    });
+
+    document.getElementById('subagent-agent-selector')?.addEventListener('change', () => {
+        if (UI.dom.subagentPanel && !UI.dom.subagentPanel.classList.contains('hidden')) {
+            openSubagentPanel(true); // refresh without toggling visibility
+        }
+    });
+
+    document.getElementById('memory-agent-selector')?.addEventListener('change', () => {
+        if (UI.dom.memoryPanel && !UI.dom.memoryPanel.classList.contains('hidden')) {
+            const activeTab = UI.dom.memoryPanel.querySelector('.memory-tab.active');
+            const fileType = activeTab?.dataset.tab || 'history';
+            loadMemoryFile(fileType);
         }
     });
 }
 
 async function loadMemoryFile(fileType) {
     try {
-        const data = await API.fetchMemoryFile(fileType);
+        const agent = UI.getSelectedAgent('memory-agent-selector');
+        const data = await API.fetchMemoryFile(fileType, agent);
         UI.renderMemoryPanel(data, fileType);
     } catch (e) {
         console.error('Failed to load memory file:', e);
@@ -532,5 +660,3 @@ async function loadMemoryFile(fileType) {
 }
 
 init();
-
-

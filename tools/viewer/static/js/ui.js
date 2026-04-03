@@ -228,12 +228,16 @@ export const UI = {
         this.dom.sessionList.innerHTML = sessions.map((s, idx) => {
             const isActive = activeFilename === s.filename;
             const displayKey = (s.key || s.filename).replace(/^(telegram|webhook|api|heartbeat):/, '');
+            const agentBadge = s.agent
+                ? `<span class="agent-badge">${this.escapeHtml(s.agent)}</span>`
+                : '';
 
             return `
                 <div class="session-item ${isActive ? 'active' : ''}" 
                      data-filename="${s.filename}"
                      style="--i: ${idx}">
                     <div class="session-key">
+                        ${agentBadge}
                         <span class="channel-badge ${s.channel}">${s.channel}</span>
                         <span>${this.escapeHtml(displayKey)}</span>
                     </div>
@@ -258,13 +262,26 @@ export const UI = {
         });
     },
 
-    renderFilters(sessions) {
+    renderFilters(sessions, config) {
         const channels = ['all', ...new Set(sessions.map(s => s.channel))];
         this.dom.channelFilters.innerHTML = channels.map(c => `
             <div class="channel-chip ${c === 'all' ? 'active' : ''}" data-channel="${c}">
                 ${c.toUpperCase()}
             </div>
         `).join('');
+
+        // Agent filters (pool mode only)
+        const agentFiltersEl = document.getElementById('agent-filters');
+        if (agentFiltersEl && config?.pool_mode && config.agents?.length > 0) {
+            agentFiltersEl.classList.remove('hidden');
+            const agentNames = config.agents.map(a => typeof a === 'string' ? a : a.name);
+            const all = ['all', ...agentNames];
+            agentFiltersEl.innerHTML = all.map(a => `
+                <div class="channel-chip agent-chip ${a === 'all' ? 'active' : ''}" data-agent="${a}">
+                    ${a === 'all' ? 'ALL AGENTS' : a.toUpperCase()}
+                </div>
+            `).join('');
+        }
     },
 
     renderMessages(session) {
@@ -729,5 +746,47 @@ export const UI = {
                 ${reqsHtml}
             </span>
         `;
+    },
+
+    // ── Agent Selector (Pool Mode) ──────────────────────────
+
+    /**
+     * Render agent selector dropdown into a container.
+     * @param {string} containerId - DOM element ID to render into
+     * @param {Array} agents - AgentInfo array from config
+     * @param {Object} [opts] - options
+     * @param {boolean} [opts.includeAll] - add 'All' option
+     * @param {string} [opts.defaultAgent] - pre-selected agent
+     */
+    renderAgentSelector(containerId, agents, opts = {}) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        if (!agents || agents.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+
+        const agentNames = agents.map(a => typeof a === 'string' ? a : a.name);
+        const defaultVal = opts.defaultAgent || agentNames[0];
+
+        let options = '';
+        if (opts.includeAll) {
+            options += '<option value="">All Agents</option>';
+        }
+        options += agentNames.map(name =>
+            `<option value="${name}" ${name === defaultVal && !opts.includeAll ? 'selected' : ''}>${name}</option>`
+        ).join('');
+
+        container.innerHTML = `<select class="agent-select" id="${containerId}-select">${options}</select>`;
+    },
+
+    /**
+     * Get currently selected agent from a selector.
+     * @param {string} containerId
+     * @returns {string|null}
+     */
+    getSelectedAgent(containerId) {
+        const select = document.getElementById(`${containerId}-select`);
+        return select?.value || null;
     }
 };

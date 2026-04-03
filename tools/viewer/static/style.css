@@ -1776,3 +1776,44 @@ em {
 .usage-reqs {
     color: #9cdcfe;
 }
+
+/* ── Agent Selector (Pool Mode) ─────────────────────────── */
+
+.panel-agent-selector {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 4px;
+}
+
+.panel-agent-selector:empty {
+    display: none;
+}
+
+.agent-select {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.agent-select:hover {
+    border-color: var(--accent);
+}
+
+.agent-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0, 188, 212, 0.15);
+}
+
+.agent-select option {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}

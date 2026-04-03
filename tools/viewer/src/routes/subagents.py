@@ -1,13 +1,14 @@
-"""Subagent log browser — reads structured JSON execution logs."""
+"""Subagent log browser — reads structured JSON execution logs. Pool-mode aware. (fork-local)"""
 
 import asyncio
 import json
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from ..config import SUBAGENTS_DIR
+from ..config import SUBAGENTS_DIR, POOL_MODE, WORKSPACES, resolve_workspace
 from ..schemas import (
     SubagentDetail,
     SubagentIteration,
@@ -23,7 +24,6 @@ router = APIRouter(prefix="/api/subagents", tags=["subagents"])
 
 
 def _parse_usage(raw: dict | None) -> SubagentUsage | None:
-    """Parse usage dict into SubagentUsage model."""
     if not raw:
         return None
     return SubagentUsage(
@@ -71,12 +71,13 @@ def _parse_subagent_json(filepath: Path) -> dict:
     }
 
 
-def _build_summary(filepath: Path) -> SubagentSummary | None:
+def _build_summary(filepath: Path, agent_name: str | None = None) -> SubagentSummary | None:
     """Fast metadata extraction from a subagent JSON log."""
     try:
         data = json.loads(filepath.read_text(encoding="utf-8"))
+        filename = f"{agent_name}/{filepath.name}" if agent_name else filepath.name
         return SubagentSummary(
-            filename=filepath.name,
+            filename=filename,
             task_id=data.get("task_id", ""),
             label=data.get("label", filepath.stem),
             status=data.get("status", "unknown"),
@@ -84,32 +85,65 @@ def _build_summary(filepath: Path) -> SubagentSummary | None:
             finished=data.get("finished"),
             duration=data.get("duration"),
             usage=_parse_usage(data.get("usage")),
+            agent=agent_name,
         )
     except Exception:
         return None
+
+
+def _resolve_subagent_filepath(filename: str) -> Path:
+    """Resolve subagent filename to path. In pool mode: 'agent/file.json'."""
+    if POOL_MODE and "/" in filename:
+        agent, base = filename.split("/", 1)
+        ws = WORKSPACES.get(agent)
+        if not ws:
+            raise HTTPException(status_code=404, detail=f"Agent workspace not found: {agent}")
+        return ws.subagents_dir / base
+
+    return SUBAGENTS_DIR / filename
+
+
+def _get_scan_dirs() -> list[tuple[Path, str | None]]:
+    """Get directories to scan for subagent logs."""
+    if POOL_MODE:
+        return [(ws.subagents_dir, name) for name, ws in WORKSPACES.items()]
+    return [(SUBAGENTS_DIR, None)]
 
 
 # ── API Endpoints ──────────────────────────────────────────────
 
 
 @router.get("", response_model=SubagentListResponse)
-async def list_subagents():
-    """List all subagent execution logs."""
-    if not SUBAGENTS_DIR.exists():
-        return SubagentListResponse(subagents=[], total=0)
-
+async def list_subagents(agent: Optional[str] = Query(None)):
+    """List subagent execution logs. Supports pool-mode filtering."""
     subagents: list[SubagentSummary] = []
-    for filepath in sorted(SUBAGENTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        summary = _build_summary(filepath)
-        if summary:
-            subagents.append(summary)
+
+    if agent and POOL_MODE:
+        ws = resolve_workspace(agent)
+        scan_dirs = [(ws.subagents_dir, agent)]
+    else:
+        scan_dirs = _get_scan_dirs()
+
+    for scan_dir, agent_name in scan_dirs:
+        if not scan_dir.exists():
+            continue
+        for filepath in sorted(scan_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            summary = _build_summary(filepath, agent_name)
+            if summary:
+                subagents.append(summary)
 
     return SubagentListResponse(subagents=subagents, total=len(subagents))
 
 
 @router.get("/watch")
-async def watch_subagents():
+async def watch_subagents(agent: Optional[str] = Query(None)):
     """SSE endpoint — emits subagent list on directory changes."""
+
+    if agent and POOL_MODE:
+        ws = resolve_workspace(agent)
+        scan_dirs = [(ws.subagents_dir, agent)]
+    else:
+        scan_dirs = _get_scan_dirs()
 
     async def generate():
         last_fingerprint = None
@@ -118,11 +152,14 @@ async def watch_subagents():
         while True:
             try:
                 fingerprint = {}
-                if SUBAGENTS_DIR.exists():
-                    for f in SUBAGENTS_DIR.glob("*.json"):
+                for scan_dir, agent_name in scan_dirs:
+                    if not scan_dir.exists():
+                        continue
+                    for f in scan_dir.glob("*.json"):
                         try:
                             st = f.stat()
-                            fingerprint[f.name] = (st.st_mtime, st.st_size)
+                            key = f"{agent_name}/{f.name}" if agent_name else f.name
+                            fingerprint[key] = (st.st_mtime, st.st_size)
                         except OSError:
                             continue
 
@@ -132,14 +169,17 @@ async def watch_subagents():
                     last_fingerprint = fp_key
 
                     subagents = []
-                    for filepath in sorted(
-                        SUBAGENTS_DIR.glob("*.json"),
-                        key=lambda p: p.stat().st_mtime,
-                        reverse=True,
-                    ):
-                        s = _build_summary(filepath)
-                        if s:
-                            subagents.append(s.model_dump())
+                    for scan_dir, agent_name in scan_dirs:
+                        if not scan_dir.exists():
+                            continue
+                        for filepath in sorted(
+                            scan_dir.glob("*.json"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        ):
+                            s = _build_summary(filepath, agent_name)
+                            if s:
+                                subagents.append(s.model_dump())
 
                     payload = json.dumps({"subagents": subagents, "total": len(subagents)})
                     yield f"data: {payload}\n\n"
@@ -167,15 +207,16 @@ async def watch_subagents():
     )
 
 
-@router.get("/{filename}", response_model=SubagentDetail)
+@router.get("/{filename:path}", response_model=SubagentDetail)
 async def get_subagent_detail(filename: str):
     """Get full parsed execution log for a subagent."""
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    filepath = SUBAGENTS_DIR / filename
+    filepath = _resolve_subagent_filepath(filename)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Subagent log not found")
 
     data = _parse_subagent_json(filepath)
+    data["filename"] = filename  # Keep agent-prefixed name
     return SubagentDetail(**data)

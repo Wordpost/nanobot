@@ -9,6 +9,7 @@ class SessionMetadata(BaseModel):
     updated_at: Optional[str] = None
     size_bytes: int = 0
     channel: Optional[str] = None
+    agent: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -30,10 +31,17 @@ class DockerLogsResponse(BaseModel):
     logs: str
     container: str
 
+class AgentInfo(BaseModel):
+    """Agent metadata exposed to frontend. (fork-local)"""
+    name: str
+    container_name: str
+
 class AppConfig(BaseModel):
     sessions_dir: str
     container_name: str
     version: str = "2.0.0-modular"
+    pool_mode: bool = False
+    agents: list[AgentInfo] = []
 
 
 class SubagentUsage(BaseModel):
@@ -66,6 +74,7 @@ class SubagentSummary(BaseModel):
     finished: Optional[str] = None
     duration: Optional[str] = None
     usage: Optional[SubagentUsage] = None
+    agent: Optional[str] = None
 
 
 class SubagentDetail(BaseModel):
@@ -85,4 +94,3 @@ class SubagentDetail(BaseModel):
 class SubagentListResponse(BaseModel):
     subagents: List[SubagentSummary]
     total: int
-

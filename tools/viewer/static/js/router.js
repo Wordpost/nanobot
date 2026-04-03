@@ -10,7 +10,7 @@ export const Router = {
         const hash = window.location.hash;
         
         if (hash.startsWith('#/session/')) {
-            const filename = hash.replace('#/session/', '');
+            const filename = hash.slice('#/session/'.length);
             await this.loadSession(filename);
         } else if (hash === '#/logs') {
             await this.loadLogs();

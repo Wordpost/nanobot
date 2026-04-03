@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
-from ..config import SESSIONS_DIR
+from ..config import SESSIONS_DIR, POOL_MODE, WORKSPACES
 from ..parser import SessionParser
 from ..schemas import SessionListResponse, SessionDetail, SessionMetadata
 
@@ -16,35 +16,70 @@ logger = logging.getLogger("session-viewer")
 
 def _validate_filename(filename: str):
     """Guard against path traversal."""
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if ".." in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
 
-def _build_session_list():
-    """Build session list from filesystem. Shared by REST and SSE."""
-    sessions = []
-    if not SESSIONS_DIR.exists():
-        return sessions
+def _resolve_filepath(filename: str):
+    """Resolve a filename (possibly agent-prefixed) to an absolute path.
 
-    for filepath in sorted(SESSIONS_DIR.glob("*.jsonl")):
-        meta = SessionParser.get_metadata_only(filepath)
-        if meta:
-            filename_key = meta.get("key", "").lower()
-            channel = "default"
-            for prefix in ["telegram", "webhook", "api", "heartbeat"]:
-                if prefix in filename_key:
-                    channel = prefix
-                    break
-            sessions.append({**meta, "channel": channel})
+    Returns (filepath, agent_name).
+    In pool mode filename looks like 'shantra/session_xyz.jsonl'.
+    In single mode it's just 'session_xyz.jsonl'.
+    """
+    if POOL_MODE and "/" in filename:
+        agent, base = filename.split("/", 1)
+        ws = WORKSPACES.get(agent)
+        if not ws:
+            raise HTTPException(status_code=404, detail=f"Agent workspace not found: {agent}")
+        return ws.sessions_dir / base, agent
+
+    return SESSIONS_DIR / filename, None
+
+
+def _build_session_list():
+    """Build session list from filesystem. Supports both single and pool modes."""
+    sessions = []
+
+    if POOL_MODE:
+        for agent_name, ws in WORKSPACES.items():
+            if not ws.sessions_dir.exists():
+                continue
+            for filepath in sorted(ws.sessions_dir.glob("*.jsonl")):
+                meta = SessionParser.get_metadata_only(filepath)
+                if not meta:
+                    continue
+                # Prefix filename with agent for unique identification
+                meta["filename"] = f"{agent_name}/{filepath.name}"
+                meta["agent"] = agent_name
+                meta["channel"] = _detect_channel(meta.get("key", ""))
+                sessions.append(meta)
+    else:
+        if not SESSIONS_DIR.exists():
+            return sessions
+        for filepath in sorted(SESSIONS_DIR.glob("*.jsonl")):
+            meta = SessionParser.get_metadata_only(filepath)
+            if meta:
+                meta["channel"] = _detect_channel(meta.get("key", ""))
+                sessions.append(meta)
 
     sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
     return sessions
 
 
+def _detect_channel(key: str) -> str:
+    """Extract channel type from session key."""
+    lower = key.lower()
+    for prefix in ("telegram", "webhook", "api", "heartbeat"):
+        if prefix in lower:
+            return prefix
+    return "default"
+
+
 @router.get("", response_model=SessionListResponse)
 async def list_sessions():
     """List all available chat sessions with metadata."""
-    if not SESSIONS_DIR.exists():
+    if not POOL_MODE and not SESSIONS_DIR.exists():
         raise HTTPException(status_code=404, detail=f"Sessions directory not found: {SESSIONS_DIR}")
 
     raw = _build_session_list()
@@ -63,11 +98,20 @@ async def watch_sessions():
         while True:
             try:
                 fingerprint = {}
-                if SESSIONS_DIR.exists():
-                    for f in SESSIONS_DIR.glob("*.jsonl"):
+                dirs_to_scan = (
+                    [(ws.sessions_dir, name) for name, ws in WORKSPACES.items()]
+                    if POOL_MODE
+                    else [(SESSIONS_DIR, None)]
+                )
+
+                for scan_dir, agent_name in dirs_to_scan:
+                    if not scan_dir.exists():
+                        continue
+                    for f in scan_dir.glob("*.jsonl"):
                         try:
                             st = f.stat()
-                            fingerprint[f.name] = (st.st_mtime, st.st_size)
+                            key = f"{agent_name}/{f.name}" if agent_name else f.name
+                            fingerprint[key] = (st.st_mtime, st.st_size)
                         except OSError:
                             continue
 
@@ -104,12 +148,12 @@ async def watch_sessions():
     )
 
 
-@router.get("/{filename}", response_model=SessionDetail)
+@router.get("/{filename:path}", response_model=SessionDetail)
 async def get_session_detail(filename: str):
     """Get full message history for a single session."""
     _validate_filename(filename)
 
-    filepath = SESSIONS_DIR / filename
+    filepath, _ = _resolve_filepath(filename)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -120,12 +164,12 @@ async def get_session_detail(filename: str):
 # ── DELETE endpoints ────────────────────────────────────────
 
 
-@router.delete("/{filename}")
+@router.delete("/{filename:path}")
 async def delete_session(filename: str):
     """Delete an entire session file."""
     _validate_filename(filename)
 
-    filepath = SESSIONS_DIR / filename
+    filepath, _ = _resolve_filepath(filename)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -138,12 +182,12 @@ class DeleteMessagesRequest(BaseModel):
     indices: List[int]
 
 
-@router.delete("/{filename}/messages")
+@router.delete("/{filename:path}/messages")
 async def delete_messages(filename: str, body: DeleteMessagesRequest):
     """Delete specific messages by their indices (0-based, among messages only)."""
     _validate_filename(filename)
 
-    filepath = SESSIONS_DIR / filename
+    filepath, _ = _resolve_filepath(filename)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -153,7 +197,6 @@ async def delete_messages(filename: str, body: DeleteMessagesRequest):
 
     parser = SessionParser(filepath)
     metadata_obj = None
-    # Collect all rows preserving order: messages and non-metadata special records
     rows: list = []
 
     for obj in parser.stream_objects():
@@ -164,13 +207,11 @@ async def delete_messages(filename: str, body: DeleteMessagesRequest):
         elif "role" in obj:
             rows.append(obj)
         elif obj.get("_type"):
-            # Preserve special records (_type: "usage", etc.)
             rows.append(obj)
         elif "messages" in obj:
             metadata_obj = {k: v for k, v in obj.items() if k != "messages"}
             rows.extend(obj["messages"])
 
-    # Build index mapping only for actual messages (have "role")
     msg_indices = [i for i, r in enumerate(rows) if "role" in r]
     max_idx = len(msg_indices) - 1
     invalid = [i for i in indices_set if i < 0 or i > max_idx]

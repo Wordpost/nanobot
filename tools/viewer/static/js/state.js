@@ -9,6 +9,7 @@ export const state = {
     config: {},
     searchQuery: '',
     activeChannel: 'all',
+    activeAgent: 'all',
     isLoading: false,
 
     listeners: [],
@@ -36,12 +37,18 @@ export const state = {
         this.filter();
     },
 
+    setAgent(agent) {
+        this.activeAgent = agent;
+        this.filter();
+    },
+
     filter() {
         this.filteredSessions = this.sessions.filter(s => {
             const matchesSearch = s.key?.toLowerCase().includes(this.searchQuery) || 
                                   s.filename?.toLowerCase().includes(this.searchQuery);
             const matchesChannel = this.activeChannel === 'all' || s.channel === this.activeChannel;
-            return matchesSearch && matchesChannel;
+            const matchesAgent = this.activeAgent === 'all' || s.agent === this.activeAgent;
+            return matchesSearch && matchesChannel && matchesAgent;
         });
         this.notify();
     }

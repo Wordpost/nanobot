@@ -11,8 +11,9 @@ export const API = {
         return await res.json();
     },
 
-    async fetchLogs() {
-        const res = await fetch('/api/logs');
+    async fetchLogs(agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const res = await fetch(`/api/logs${params}`);
         if (!res.ok) throw new Error('Failed to fetch logs');
         return await res.json();
     },
@@ -23,14 +24,16 @@ export const API = {
         return await res.json();
     },
 
-    async fetchConfigManager() {
-        const res = await fetch('/api/config-manager');
+    async fetchConfigManager(agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const res = await fetch(`/api/config-manager${params}`);
         if (!res.ok) throw new Error('Failed to fetch full config.json');
         return await res.json();
     },
 
-    async saveConfigManager(payload) {
-        const res = await fetch('/api/config-manager', {
+    async saveConfigManager(payload, agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const res = await fetch(`/api/config-manager${params}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -44,10 +47,14 @@ export const API = {
 
     /**
      * Open SSE stream for Docker logs.
+     * @param {Function} onLine
+     * @param {Function} onError
+     * @param {string} [agent] - agent name for pool mode
      * @returns {EventSource}
      */
-    streamLogs(onLine, onError) {
-        const es = new EventSource('/api/logs/stream');
+    streamLogs(onLine, onError, agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const es = new EventSource(`/api/logs/stream${params}`);
         es.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -79,7 +86,7 @@ export const API = {
     },
 
     /**
-     * Open SSE stream for System Deployment
+     * Open SSE stream for System Deployment (all agents).
      * @returns {EventSource}
      */
     streamDeploy(onLine, onError) {
@@ -98,11 +105,15 @@ export const API = {
     },
 
     /**
-     * Open SSE stream for System Restart
+     * Open SSE stream for System Restart (specific agent).
+     * @param {Function} onLine
+     * @param {Function} onError
+     * @param {string} [agent] - agent name for pool mode
      * @returns {EventSource}
      */
-    streamRestart(onLine, onError) {
-        const es = new EventSource('/api/system/restart/stream');
+    streamRestart(onLine, onError, agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const es = new EventSource(`/api/system/restart/stream${params}`);
         es.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -118,8 +129,9 @@ export const API = {
 
     // ── Subagent API ──────────────────────────────────────────
 
-    async fetchSubagents() {
-        const res = await fetch('/api/subagents');
+    async fetchSubagents(agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const res = await fetch(`/api/subagents${params}`);
         if (!res.ok) throw new Error('Failed to fetch subagents');
         return await res.json();
     },
@@ -130,8 +142,9 @@ export const API = {
         return await res.json();
     },
 
-    watchSubagents(onUpdate, onError) {
-        const es = new EventSource('/api/subagents/watch');
+    watchSubagents(onUpdate, onError, agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const es = new EventSource(`/api/subagents/watch${params}`);
         es.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -164,14 +177,16 @@ export const API = {
 
     // ── Memory / History ─────────────────────────────────────
 
-    async fetchMemoryFile(fileType) {
-        const res = await fetch(`/api/memory/${fileType}`);
+    async fetchMemoryFile(fileType, agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const res = await fetch(`/api/memory/${fileType}${params}`);
         if (!res.ok) throw new Error(`Failed to fetch ${fileType}`);
         return await res.json();
     },
 
-    async clearMemoryFile(fileType) {
-        const res = await fetch(`/api/memory/${fileType}`, { method: 'DELETE' });
+    async clearMemoryFile(fileType, agent) {
+        const params = agent ? `?agent=${agent}` : '';
+        const res = await fetch(`/api/memory/${fileType}${params}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(`Failed to clear ${fileType}`);
         return await res.json();
     }
