@@ -1709,9 +1709,6 @@ em {
 
 /* ── Token Usage Badge ───────────────────────────── */
 .usage-badge {
-    position: absolute;
-    top: -12px;
-    right: 12px;
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -1736,6 +1733,12 @@ em {
 .usage-badge svg {
     opacity: 0.7;
     flex-shrink: 0;
+}
+
+.message-header .usage-badge {
+    position: absolute;
+    top: -12px;
+    right: 12px;
 }
 
 .usage-cached,
