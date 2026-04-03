@@ -1,3 +1,15 @@
+"""Webhook channel with slot-based routing (fork-local).
+
+Each *slot* is a named webhook receiver with its own:
+- HTTP path (e.g. ``/webhook/swarm``, ``/webhook/crm``)
+- Bearer token for authentication
+- Handler type (``standard``, ``swarm``, ``raw``)
+- Mapping templates for payload extraction
+- Optional fixed session key
+
+Slots are configured in ``channels.webhook.slots`` in ``config.json``.
+"""
+
 import asyncio
 import json
 import re
@@ -9,63 +21,140 @@ from loguru import logger
 from nanobot.channels.base import BaseChannel
 from nanobot.bus.events import OutboundMessage
 
+
+# ------------------------------------------------------------------ #
+# Slot definition                                                     #
+# ------------------------------------------------------------------ #
+
+class WebhookSlot:
+    """A single named webhook receiver configuration."""
+
+    __slots__ = ("name", "path", "token", "handler", "mappings", "session_key", "allow_from")
+
+    def __init__(self, name: str, cfg: dict[str, Any]) -> None:
+        self.name = name
+        self.path: str = cfg.get("path", f"/webhook/{name}" if name != "default" else "/webhook")
+        self.token: str = cfg.get("token", "")
+        self.handler: str = cfg.get("handler", "standard")  # standard | swarm | raw
+        self.mappings: dict[str, str] = cfg.get("mappings", {})
+        self.session_key: str | None = cfg.get("sessionKey") or cfg.get("session_key")
+        self.allow_from: list[str] = cfg.get("allowFrom", cfg.get("allow_from", ["*"]))
+
+    def __repr__(self) -> str:
+        return f"<Slot '{self.name}' path={self.path} handler={self.handler}>"
+
+
+# ------------------------------------------------------------------ #
+# WebhookChannel                                                      #
+# ------------------------------------------------------------------ #
+
 class WebhookChannel(BaseChannel):
+    """HTTP webhook channel with slot-based multi-endpoint routing (fork-local)."""
+
     name = "webhook"
     display_name = "Webhook"
 
-    def __init__(self, config: Any, bus: Any):
+    def __init__(self, config: Any, bus: Any) -> None:
         super().__init__(config, bus)
-        self.raw_mappings = self.config.get("mappings", {}) if isinstance(self.config, dict) else getattr(self.config, "mappings", {})
         self._stop_event = asyncio.Event()
+        self._slots: dict[str, WebhookSlot] = {}  # path → slot
+        self._build_slots()
+
+    # ------------------------------------------------------------------ #
+    # Slot registry                                                       #
+    # ------------------------------------------------------------------ #
+
+    def _cfg(self, key: str, default: Any = None) -> Any:
+        """Read from config regardless of dict or pydantic model."""
+        if isinstance(self.config, dict):
+            return self.config.get(key, default)
+        return getattr(self.config, key, default)
+
+    def _build_slots(self) -> None:
+        """Build slot registry from config.slots."""
+        slots_cfg = self._cfg("slots")
+
+        if not slots_cfg or not isinstance(slots_cfg, dict):
+            logger.error(
+                "WebhookChannel: 'slots' not configured. "
+                "Add 'slots' section to channels.webhook in config.json"
+            )
+            return
+
+        for slot_name, slot_data in slots_cfg.items():
+            slot = WebhookSlot(slot_name, slot_data)
+            self._slots[slot.path] = slot
+            logger.debug("Webhook slot registered: {}", slot)
+
+        if not self._slots:
+            logger.warning("WebhookChannel: no slots configured")
+
+    def _match_slot(self, path: str) -> WebhookSlot | None:
+        """Find the slot that matches the request path."""
+        # Exact match
+        if path in self._slots:
+            return self._slots[path]
+
+        # Without trailing slash
+        clean = path.rstrip("/")
+        if clean in self._slots:
+            return self._slots[clean]
+
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle                                                           #
+    # ------------------------------------------------------------------ #
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:
         return {
             "enabled": False,
             "port": 1987,
-            "token": "",
-            "allowFrom": ["*"],
-            "mappings": {
-                "messageTemplate": "",
-                "senderTemplate": "webhook",
-                "sessionKey": "webhook",
-            }
+            "slots": {
+                "default": {
+                    "path": "/webhook",
+                    "token": "",
+                    "handler": "standard",
+                    "allowFrom": ["*"],
+                    "mappings": {
+                        "messageTemplate": "",
+                        "senderTemplate": "webhook",
+                        "sessionKey": "webhook",
+                    },
+                },
+            },
         }
 
-    def is_allowed(self, sender_id: str) -> bool:
-        """
-        Overriding is_allowed directly in our plugin to fix the dictionary configuration bug
-        in nanobots core BaseChannel without needing to modify the core itself.
-        """
-        # The core does getattr(self.config, 'allow_from'), which fails when self.config is a dict
-        allow_list = self.config.get("allowFrom", self.config.get("allow_from", []))
-        if not allow_list:
-            logger.warning("{}: allowFrom is empty — all access denied", self.name)
-            return False
-        if "*" in allow_list:
+    def _is_allowed_by_slot(self, slot: WebhookSlot, sender_id: str) -> bool:
+        """Check per-slot allow list."""
+        if not slot.allow_from:
+            return True  # slot inherits channel-level check
+        if "*" in slot.allow_from:
             return True
-        return str(sender_id) in allow_list
+        return str(sender_id) in slot.allow_from
 
     async def start(self) -> None:
-        """Start an HTTP server that listens for incoming JSON events."""
+        """Start HTTP server with routes for each configured slot."""
         self._running = True
-        port = self.config.get("port", 1987) if isinstance(self.config, dict) else getattr(self.config, "port", 1987)
+        port = self._cfg("port", 1987)
 
         app = web.Application()
-        # Endpoints matching OpenClaw's approach
-        app.router.add_post("/webhook", self._on_request)
-        app.router.add_post("/webhook/{agent}", self._on_request) 
+
+        # Register route for each slot path
+        for path in self._slots:
+            app.router.add_post(path, self._on_request)
 
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        logger.info("Webhook listening on :{}", port)
 
-        # Block until stopped
+        slot_names = [s.name for s in self._slots.values()]
+        logger.info("Webhook listening on :{}, slots: {}", port, slot_names)
+
         self._stop_event.clear()
         await self._stop_event.wait()
-
         await runner.cleanup()
 
     async def stop(self) -> None:
@@ -73,62 +162,87 @@ class WebhookChannel(BaseChannel):
         self._stop_event.set()
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Deliver an outbound message.
-        Webhooks typically are one-way (inbound), unless an explicit callback URL is set.
-        For now, we just log it.
-        """
+        """Deliver outbound (log-only for webhooks unless callback configured)."""
         logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
 
-    def _verify_token(self, request: web.Request) -> web.Response | None:
-        """Verify request authorization. Returns error Response if invalid, else None."""
-        import hmac
-        expected_token = self.config.get("token") if isinstance(self.config, dict) else getattr(self.config, "token", None)
-        
-        if not expected_token:
-            logger.error("Security Alert: Webhook channel running without a 'token'.")
-            return web.json_response({"error": "Internal Server Error - Security Misconfiguration"}, status=500)
-
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            logger.warning("Webhook auth failed: Missing Bearer token.")
-            return web.json_response({"error": "Unauthorized"}, status=401)
-            
-        if not hmac.compare_digest(auth_header[7:], expected_token):
-            logger.warning("Webhook auth failed: Invalid token.")
-            return web.json_response({"error": "Unauthorized"}, status=401)
-            
-        return None
-
-    def _extract_payload(self, body: dict) -> tuple[str, str, str]:
-        """Extract text, sender, and chat_id from JSON body via mapped templates."""
-        text = self._render_template(self.raw_mappings.get("messageTemplate"), body)
-        sender = self._render_template(self.raw_mappings.get("senderTemplate", "webhook"), body)
-        chat_id = self._render_template(self.raw_mappings.get("sessionKey", "webhook"), body)
-
-        if not text:
-            # Fallback for arbitrary payloads with no templates
-            text = json.dumps(body, indent=2, ensure_ascii=False)
-            
-        return text, sender, chat_id
+    # ------------------------------------------------------------------ #
+    # Request handling — slot dispatcher                                  #
+    # ------------------------------------------------------------------ #
 
     async def _on_request(self, request: web.Request) -> web.Response:
-        """Handle incoming HTTP POST routing and dispatching."""
-        auth_err = self._verify_token(request)
+        """Route incoming POST to the matching slot handler."""
+        path = request.path
+
+        slot = self._match_slot(path)
+        if not slot:
+            logger.warning("No slot matches path: {}", path)
+            return web.json_response({"error": f"No handler for {path}"}, status=404)
+
+        # Per-slot auth
+        auth_err = self._verify_slot_token(request, slot)
         if auth_err:
             return auth_err
-        
+
+        # Parse body
         try:
             body = await request.json()
         except json.JSONDecodeError:
-            logger.error("Received non-JSON content on webhook")
+            logger.error("Received non-JSON content on {}", path)
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        # Swarm inter-agent payload detection (fork-local)
-        if self._is_swarm_payload(body):
-            return await self._handle_swarm_message(body)
+        # Dispatch by handler type
+        if slot.handler == "swarm":
+            return await self._handle_swarm(slot, body)
+        elif slot.handler == "raw":
+            return await self._handle_raw(slot, body)
+        else:
+            return await self._handle_standard(slot, body)
 
-        # Standard webhook processing
-        text, sender, chat_id = self._extract_payload(body)
+    # ------------------------------------------------------------------ #
+    # Auth                                                                #
+    # ------------------------------------------------------------------ #
+
+    def _verify_slot_token(self, request: web.Request, slot: WebhookSlot) -> web.Response | None:
+        """Verify Bearer token for a specific slot. Returns error Response or None."""
+        import hmac
+
+        token = slot.token
+        if not token:
+            logger.error("Security Alert: slot '{}' has no token configured.", slot.name)
+            return web.json_response(
+                {"error": "Internal Server Error - Security Misconfiguration"}, status=500,
+            )
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            logger.warning("Auth failed on slot '{}': Missing Bearer token.", slot.name)
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        if not hmac.compare_digest(auth_header[7:], token):
+            logger.warning("Auth failed on slot '{}': Invalid token.", slot.name)
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Handler: standard (template-based extraction)                       #
+    # ------------------------------------------------------------------ #
+
+    async def _handle_standard(self, slot: WebhookSlot, body: dict) -> web.Response:
+        """Process via template mappings (same logic as legacy _extract_payload)."""
+        mappings = slot.mappings
+        text = self._render_template(mappings.get("messageTemplate"), body)
+        sender = self._render_template(mappings.get("senderTemplate", "webhook"), body)
+        chat_id = slot.session_key or self._render_template(
+            mappings.get("sessionKey", "webhook"), body,
+        )
+
+        if not text:
+            text = json.dumps(body, indent=2, ensure_ascii=False)
+
+        if not self._is_allowed_by_slot(slot, sender):
+            logger.warning("Access denied for sender {} on slot '{}'", sender, slot.name)
+            return web.json_response({"error": "Forbidden"}, status=403)
 
         await self._handle_message(
             sender_id=sender,
@@ -136,35 +250,27 @@ class WebhookChannel(BaseChannel):
             content=text,
             media=[],
         )
-
-        return web.json_response({"ok": True, "sender_id": sender})
+        return web.json_response({"ok": True, "slot": slot.name, "sender_id": sender})
 
     # ------------------------------------------------------------------ #
-    # Swarm inter-agent communication (fork-local)                        #
+    # Handler: swarm (inter-agent handoff)                                #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _is_swarm_payload(body: dict) -> bool:
-        """Detect a swarm handoff payload by required fields."""
-        return (
-            isinstance(body.get("chain_id"), str)
-            and isinstance(body.get("origin"), dict)
-            and isinstance(body.get("task"), str)
-        )
-
-    async def _handle_swarm_message(self, body: dict) -> web.Response:
-        """Process an incoming swarm handoff message.
+    async def _handle_swarm(self, slot: WebhookSlot, body: dict) -> web.Response:
+        """Process swarm handoff payload.
 
         Extracts machine metadata into InboundMessage.metadata (invisible to
         the LLM) and formats the task + data as clean text for the agent.
-        Routes the message to a session scoped by chain_id so subsequent
-        handoffs in the same chain share context.
         """
         task = body.get("task", "")
         data = body.get("data")
         msg_type = body.get("type", "task")
         origin = body.get("origin", {})
         chain_id = body.get("chain_id", "default")
+
+        # Validate required swarm fields
+        if not task:
+            return web.json_response({"error": "Missing 'task' field"}, status=400)
 
         # Build LLM-visible content
         content_parts: list[str] = [task]
@@ -185,14 +291,15 @@ class WebhookChannel(BaseChannel):
             "_origin": origin,
             "_human": body.get("human", {}),
             "_type": msg_type,
+            "_slot": slot.name,
         }
 
         sender = origin.get("agent", "swarm")
         session_key = f"swarm:{chain_id}"
 
         logger.info(
-            "Swarm {} from '{}' (chain={}, hop={}): {}",
-            msg_type, sender, chain_id,
+            "Swarm {} from '{}' via slot '{}' (chain={}, hop={}): {}",
+            msg_type, sender, slot.name, chain_id,
             body.get("hop_count", 0), task[:80],
         )
 
@@ -206,17 +313,38 @@ class WebhookChannel(BaseChannel):
 
         return web.json_response({"ok": True, "swarm": True, "chain_id": chain_id})
 
+    # ------------------------------------------------------------------ #
+    # Handler: raw (pass full body as JSON)                               #
+    # ------------------------------------------------------------------ #
+
+    async def _handle_raw(self, slot: WebhookSlot, body: dict) -> web.Response:
+        """Pass the full JSON body as text to the agent."""
+        text = json.dumps(body, indent=2, ensure_ascii=False)
+        chat_id = slot.session_key or f"webhook:{slot.name}"
+        sender = f"webhook:{slot.name}"
+
+        await self._handle_message(
+            sender_id=sender,
+            chat_id=chat_id,
+            content=text,
+            media=[],
+            metadata={"_slot": slot.name, "_raw": True},
+        )
+
+        return web.json_response({"ok": True, "slot": slot.name})
+
+    # ------------------------------------------------------------------ #
+    # Template engine (unchanged)                                         #
+    # ------------------------------------------------------------------ #
+
     def _render_template(self, template_str: str | None, data: dict) -> str:
-        """
-        Lightweight custom template parser that supports dot.notation and array index access
-        e.g., {{ messages.0.text }} extracts from {"messages": [{"text": "Hello"}]}
-        """
+        """Lightweight template parser: ``{{ messages.0.text }}`` dot-notation."""
         if not template_str:
             return ""
-        
-        def replace(match):
-            keys = match.group(1).strip().split('.')
-            val = data
+
+        def replace(match: re.Match) -> str:
+            keys = match.group(1).strip().split(".")
+            val: Any = data
             for k in keys:
                 if isinstance(val, dict):
                     val = val.get(k, "")
@@ -225,13 +353,12 @@ class WebhookChannel(BaseChannel):
                     val = val[idx] if 0 <= idx < len(val) else ""
                 else:
                     return ""
-                
                 if val == "":
                     return ""
             return str(val) if val is not None else ""
 
         try:
-            return re.sub(r'\{\{(.*?)\}\}', replace, str(template_str))
+            return re.sub(r"\{\{(.*?)\}\}", replace, str(template_str))
         except Exception as e:
             logger.error("Failed to parse template '{}': {}", template_str, e)
             return ""

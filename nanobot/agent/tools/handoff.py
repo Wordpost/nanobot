@@ -219,7 +219,7 @@ class HandoffTool(Tool):
 
         # Use HOSTNAME (auto-set by Docker) or fallback to role-based name
         host = os.environ.get("HOSTNAME", f"nanobot-{self._config.get('role', 'unknown')}")
-        url = f"http://{host}:1987/webhook"
+        url = f"http://{host}:1987/webhook/swarm"  # (fork-local) default to swarm slot path
 
         logger.debug("Swarm: using {} as self_url (from HOSTNAME or role)", url)
         return url
