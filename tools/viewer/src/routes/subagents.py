@@ -1,8 +1,7 @@
-"""Subagent log browser — parses Markdown execution logs into structured JSON."""
+"""Subagent log browser — reads structured JSON execution logs."""
 
 import asyncio
 import json
-import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -15,181 +14,76 @@ from ..schemas import (
     SubagentListResponse,
     SubagentSummary,
     SubagentToolCall,
+    SubagentUsage,
 )
 
 router = APIRouter(prefix="/api/subagents", tags=["subagents"])
 
-# ── Markdown parser ────────────────────────────────────────────
+# ── JSON parser ────────────────────────────────────────────────
 
 
-def _parse_header(text: str) -> dict:
-    """Extract metadata from the header portion of a subagent log."""
-    info: dict = {}
-
-    m = re.search(r"# Subagent:\s*(.+)", text)
-    if m:
-        info["label"] = m.group(1).strip()
-
-    m = re.search(r"\*\*Task ID:\*\*\s*`([^`]+)`", text)
-    if m:
-        info["task_id"] = m.group(1).strip()
-
-    m = re.search(r"\*\*Started:\*\*\s*`([^`]+)`", text)
-    if m:
-        info["started"] = m.group(1).strip()
-
-    return info
+def _parse_usage(raw: dict | None) -> SubagentUsage | None:
+    """Parse usage dict into SubagentUsage model."""
+    if not raw:
+        return None
+    return SubagentUsage(
+        prompt_tokens=raw.get("prompt_tokens", 0),
+        completion_tokens=raw.get("completion_tokens", 0),
+        total_tokens=raw.get("total_tokens", 0),
+        cached_tokens=raw.get("cached_tokens", 0),
+        requests=raw.get("requests", 0),
+    )
 
 
-def _parse_result(text: str) -> dict:
-    """Extract final result block from the log."""
-    info: dict = {}
+def _parse_subagent_json(filepath: Path) -> dict:
+    """Parse a subagent JSON log into structured data."""
+    data = json.loads(filepath.read_text(encoding="utf-8"))
 
-    m = re.search(r"\*\*Status:\*\*\s*(.+)", text)
-    if m:
-        raw = m.group(1).strip()
-        info["status"] = "ok" if "COMPLETED" in raw else "error"
-
-    m = re.search(r"\*\*Finished:\*\*\s*`([^`]+)`", text)
-    if m:
-        info["finished"] = m.group(1).strip()
-
-    m = re.search(r"\*\*Duration:\*\*\s*`([^`]+)`", text)
-    if m:
-        info["duration"] = m.group(1).strip()
-
-    return info
-
-
-def _parse_iterations(text: str) -> list[SubagentIteration]:
-    """Parse iteration blocks from the execution log section."""
-    iterations: list[SubagentIteration] = []
-
-    # Split by ### Iteration N
-    parts = re.split(r"### Iteration (\d+)", text)
-    # parts = [preamble, "1", content1, "2", content2, ...]
-    i = 1
-    while i < len(parts) - 1:
-        num = int(parts[i])
-        content = parts[i + 1]
-        i += 2
-
-        iteration = SubagentIteration(number=num)
-
-        # Model response
-        resp_match = re.search(
-            r"\*\*Model Response:\*\*\s*\n\n(.*?)(?=####|\*\*|---|\Z)",
-            content,
-            re.DOTALL,
-        )
-        if resp_match:
-            iteration.model_response = resp_match.group(1).strip()
-
-        # Tool calls: #### 🔧 `tool_name`
-        tool_blocks = re.split(r"####\s*🔧\s*`([^`]+)`", content)
-        # tool_blocks = [preamble, name1, body1, name2, body2, ...]
-        t = 1
-        while t < len(tool_blocks) - 1:
-            tc_name = tool_blocks[t].strip()
-            tc_body = tool_blocks[t + 1]
-            t += 2
-
-            tc = SubagentToolCall(name=tc_name)
-
-            # Arguments
-            args_match = re.search(
-                r"\*\*Arguments:\*\*\s*```(?:json)?\s*(.*?)```",
-                tc_body,
-                re.DOTALL,
+    iterations = []
+    for it in data.get("iterations", []):
+        tool_calls = [
+            SubagentToolCall(
+                name=tc.get("name", ""),
+                arguments=tc.get("arguments", ""),
+                result=tc.get("result", ""),
             )
-            if args_match:
-                tc.arguments = args_match.group(1).strip()
+            for tc in it.get("tool_calls", [])
+        ]
+        iterations.append(SubagentIteration(
+            number=it.get("number", 0),
+            model_response=it.get("model_response"),
+            tool_calls=tool_calls,
+            usage=_parse_usage(it.get("usage")),
+        ))
 
-            # Result
-            result_match = re.search(
-                r"\*\*Result:\*\*\s*```\s*(.*?)```",
-                tc_body,
-                re.DOTALL,
-            )
-            if result_match:
-                tc.result = result_match.group(1).strip()
-
-            iteration.tool_calls.append(tc)
-
-        iterations.append(iteration)
-
-    return iterations
-
-
-def _parse_subagent_md(filepath: Path) -> dict:
-    """Parse a complete subagent Markdown log into structured data."""
-    text = filepath.read_text(encoding="utf-8")
-
-    data: dict = {"filename": filepath.name}
-    data.update(_parse_header(text))
-
-    # Task section
-    task_match = re.search(r"## Task\s*\n\n(.*?)(?=\n---)", text, re.DOTALL)
-    if task_match:
-        data["task"] = task_match.group(1).strip()
-
-    # Execution log section
-    exec_match = re.search(r"## Execution Log\s*\n\n(.*?)(?=\n## Result|\Z)", text, re.DOTALL)
-    if exec_match:
-        data["iterations"] = _parse_iterations(exec_match.group(1))
-
-    # Result section
-    result_match = re.search(r"## Result\s*\n\n(.*)", text, re.DOTALL)
-    if result_match:
-        result_text = result_match.group(1)
-        data.update(_parse_result(result_text))
-
-        # Final result text (everything after the metadata bullets)
-        final_lines = []
-        past_meta = False
-        for line in result_text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("- **") and not past_meta:
-                continue
-            if stripped == "" and not past_meta:
-                past_meta = True
-                continue
-            past_meta = True
-            final_lines.append(line)
-        data["final_result"] = "\n".join(final_lines).strip()
-
-    return data
+    return {
+        "filename": filepath.name,
+        "task_id": data.get("task_id", ""),
+        "label": data.get("label", filepath.stem),
+        "status": data.get("status", "unknown"),
+        "started": data.get("started"),
+        "finished": data.get("finished"),
+        "duration": data.get("duration"),
+        "task": data.get("task", ""),
+        "iterations": iterations,
+        "final_result": data.get("final_result", ""),
+        "usage": _parse_usage(data.get("usage")),
+    }
 
 
 def _build_summary(filepath: Path) -> SubagentSummary | None:
-    """Fast metadata extraction from a subagent log."""
+    """Fast metadata extraction from a subagent JSON log."""
     try:
-        # Read only the first ~2KB for speed
-        with open(filepath, encoding="utf-8") as f:
-            header = f.read(2048)
-
-        info = _parse_header(header)
-
-        # Quick status check — need to read tail
-        tail = ""
-        size = filepath.stat().st_size
-        if size > 2048:
-            with open(filepath, encoding="utf-8") as f:
-                f.seek(max(0, size - 512))
-                tail = f.read()
-        else:
-            tail = header
-
-        result_info = _parse_result(tail)
-
+        data = json.loads(filepath.read_text(encoding="utf-8"))
         return SubagentSummary(
             filename=filepath.name,
-            task_id=info.get("task_id", ""),
-            label=info.get("label", filepath.stem),
-            status=result_info.get("status", "running"),
-            started=info.get("started"),
-            finished=result_info.get("finished"),
-            duration=result_info.get("duration"),
+            task_id=data.get("task_id", ""),
+            label=data.get("label", filepath.stem),
+            status=data.get("status", "unknown"),
+            started=data.get("started"),
+            finished=data.get("finished"),
+            duration=data.get("duration"),
+            usage=_parse_usage(data.get("usage")),
         )
     except Exception:
         return None
@@ -205,7 +99,7 @@ async def list_subagents():
         return SubagentListResponse(subagents=[], total=0)
 
     subagents: list[SubagentSummary] = []
-    for filepath in sorted(SUBAGENTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for filepath in sorted(SUBAGENTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         summary = _build_summary(filepath)
         if summary:
             subagents.append(summary)
@@ -225,7 +119,7 @@ async def watch_subagents():
             try:
                 fingerprint = {}
                 if SUBAGENTS_DIR.exists():
-                    for f in SUBAGENTS_DIR.glob("*.md"):
+                    for f in SUBAGENTS_DIR.glob("*.json"):
                         try:
                             st = f.stat()
                             fingerprint[f.name] = (st.st_mtime, st.st_size)
@@ -239,7 +133,7 @@ async def watch_subagents():
 
                     subagents = []
                     for filepath in sorted(
-                        SUBAGENTS_DIR.glob("*.md"),
+                        SUBAGENTS_DIR.glob("*.json"),
                         key=lambda p: p.stat().st_mtime,
                         reverse=True,
                     ):
@@ -283,5 +177,5 @@ async def get_subagent_detail(filename: str):
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Subagent log not found")
 
-    data = _parse_subagent_md(filepath)
+    data = _parse_subagent_json(filepath)
     return SubagentDetail(**data)

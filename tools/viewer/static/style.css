@@ -1217,7 +1217,14 @@ em {
 .subagent-card-meta {
     display: flex;
     align-items: center;
+    padding-left: 10px;
+    margin-bottom: 3px;
     gap: 10px;
+}
+
+.subagent-card-meta .chevron {
+    margin-bottom: 3px;
+    line-height: 1;
 }
 
 .subagent-status {

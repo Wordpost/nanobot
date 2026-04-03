@@ -36,6 +36,14 @@ class AppConfig(BaseModel):
     version: str = "2.0.0-modular"
 
 
+class SubagentUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+    requests: int = 0
+
+
 class SubagentToolCall(BaseModel):
     name: str
     arguments: str = ""
@@ -46,6 +54,7 @@ class SubagentIteration(BaseModel):
     number: int
     model_response: Optional[str] = None
     tool_calls: List[SubagentToolCall] = []
+    usage: Optional[SubagentUsage] = None
 
 
 class SubagentSummary(BaseModel):
@@ -56,6 +65,7 @@ class SubagentSummary(BaseModel):
     started: Optional[str] = None
     finished: Optional[str] = None
     duration: Optional[str] = None
+    usage: Optional[SubagentUsage] = None
 
 
 class SubagentDetail(BaseModel):
@@ -69,6 +79,7 @@ class SubagentDetail(BaseModel):
     task: str = ""
     iterations: List[SubagentIteration] = []
     final_result: str = ""
+    usage: Optional[SubagentUsage] = None
 
 
 class SubagentListResponse(BaseModel):

@@ -31,11 +31,11 @@ def _slugify(text: str) -> str:
 
 
 class _SubagentLogHook(AgentHook):
-    """Lifecycle hook that logs subagent execution to a Markdown file.
+    """Lifecycle hook that logs subagent execution to a JSON file (fork-local).
 
-    Creates a detailed execution report at ``workspace/subagents/{task_id}_{slug}.md``
-    containing the system prompt, each iteration's tool calls with arguments and
-    results, model responses, and the final outcome.
+    Creates a structured execution report at ``workspace/subagents/{task_id}_{slug}.json``
+    containing task metadata, each iteration's tool calls with arguments and
+    results, model responses, usage metrics, and the final outcome.
     """
 
     _MAX_RESULT_CHARS = 2000
@@ -46,35 +46,34 @@ class _SubagentLogHook(AgentHook):
         task_id: str,
         label: str,
         task: str,
-        system_prompt: str,
         workspace: Path,
     ) -> None:
         self._task_id = task_id
         self._label = label
         self._log_dir = workspace / "subagents"
         self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._log_file = self._log_dir / f"{task_id}_{_slugify(label)}.md"
+        self._log_file = self._log_dir / f"{task_id}_{_slugify(label)}.json"
         self._started = datetime.now()
-        self._write_header(task, system_prompt)
-
-    def _write_header(self, task: str, system_prompt: str) -> None:
-        header = (
-            f"# Subagent: {self._label}\n\n"
-            f"- **Task ID:** `{self._task_id}`\n"
-            f"- **Started:** `{self._started.isoformat()}`\n\n"
-            "---\n\n"
-            "## Task\n\n"
-            f"{task}\n\n"
-            "---\n\n"
-            "## System Prompt\n\n"
-            "<details>\n"
-            "<summary>Click to expand</summary>\n\n"
-            f"```\n{system_prompt}\n```\n\n"
-            "</details>\n\n"
-            "---\n\n"
-            "## Execution Log\n\n"
-        )
-        self._log_file.write_text(header, encoding="utf-8")
+        self._requests_count = 0
+        self._total_usage: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cached_tokens": 0,
+        }
+        self._data: dict[str, Any] = {
+            "task_id": task_id,
+            "label": label,
+            "task": task,
+            "started": self._started.isoformat(),
+            "status": "running",
+            "finished": None,
+            "duration": None,
+            "usage": {},
+            "iterations": [],
+            "final_result": "",
+        }
+        self._flush()
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         for tc in context.tool_calls:
@@ -85,47 +84,75 @@ class _SubagentLogHook(AgentHook):
             )
 
     async def after_iteration(self, context: AgentHookContext) -> None:
-        lines: list[str] = [f"### Iteration {context.iteration}\n"]
+        self._requests_count += 1
+
+        # Accumulate usage from this iteration
+        iter_usage = context.usage or {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"):
+            self._total_usage[key] = self._total_usage.get(key, 0) + iter_usage.get(key, 0)
+
+        # Build iteration record
+        iteration_data: dict[str, Any] = {
+            "number": context.iteration,
+            "model_response": None,
+            "usage": dict(iter_usage) if iter_usage else {},
+            "tool_calls": [],
+        }
 
         if context.response and context.response.content:
             thinking = context.response.content
             if len(thinking) > self._MAX_THINKING_CHARS:
                 thinking = thinking[: self._MAX_THINKING_CHARS] + "\n\n... (truncated)"
-            lines.append(f"**Model Response:**\n\n{thinking}\n")
+            iteration_data["model_response"] = thinking
 
         for i, tc in enumerate(context.tool_calls):
-            lines.append(self._format_tool_call(tc, context.tool_results, i))
+            tc_data = self._format_tool_call(tc, context.tool_results, i)
+            iteration_data["tool_calls"].append(tc_data)
 
-        lines.append("---\n")
-        self._append("\n".join(lines))
+        self._data["iterations"].append(iteration_data)
+        self._data["usage"] = {
+            **self._total_usage,
+            "requests": self._requests_count,
+        }
+        self._flush()
 
-    def _format_tool_call(self, tc: Any, results: list[Any], index: int) -> str:
+    def _format_tool_call(self, tc: Any, results: list[Any], index: int) -> dict[str, str]:
         """Format a single tool call with its arguments and result."""
         args_str = json.dumps(tc.arguments, ensure_ascii=False, indent=2)
-        block = f"#### \U0001f527 `{tc.name}`\n\n**Arguments:**\n```json\n{args_str}\n```\n"
+        tc_data: dict[str, str] = {
+            "name": tc.name,
+            "arguments": args_str,
+            "result": "",
+        }
         if index < len(results):
             result_str = str(results[index])
             if len(result_str) > self._MAX_RESULT_CHARS:
                 result_str = result_str[: self._MAX_RESULT_CHARS] + "\n... (truncated)"
-            block += f"**Result:**\n```\n{result_str}\n```\n"
-        return block
+            tc_data["result"] = result_str
+        return tc_data
 
     def write_final(self, status: Literal["ok", "error"], result: str) -> None:
         """Write final outcome. Called explicitly from SubagentManager."""
         elapsed = datetime.now() - self._started
-        status_icon = "\u2705 COMPLETED" if status == "ok" else "\u274c FAILED"
-        footer = (
-            f"\n## Result\n\n"
-            f"- **Status:** {status_icon}\n"
-            f"- **Finished:** `{datetime.now().isoformat()}`\n"
-            f"- **Duration:** `{elapsed.total_seconds():.1f}s`\n\n"
-            f"{result}\n"
-        )
-        self._append(footer)
+        self._data["status"] = status
+        self._data["finished"] = datetime.now().isoformat()
+        self._data["duration"] = f"{elapsed.total_seconds():.1f}s"
+        self._data["final_result"] = result
+        self._data["usage"] = {
+            **self._total_usage,
+            "requests": self._requests_count,
+        }
+        self._flush()
 
-    def _append(self, text: str) -> None:
-        with self._log_file.open("a", encoding="utf-8") as f:
-            f.write(text)
+    def _flush(self) -> None:
+        """Write current state to disk."""
+        try:
+            self._log_file.write_text(
+                json.dumps(self._data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("Failed to write subagent log {}: {}", self._log_file, e)
 
 
 class SubagentManager:
@@ -226,7 +253,7 @@ class SubagentManager:
                 {"role": "user", "content": task},
             ]
 
-            hook = _SubagentLogHook(task_id, label, task, system_prompt, self.workspace)
+            hook = _SubagentLogHook(task_id, label, task, self.workspace)
 
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,

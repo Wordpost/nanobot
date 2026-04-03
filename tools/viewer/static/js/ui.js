@@ -494,6 +494,7 @@ export const UI = {
                     <span class="subagent-list-id">${this.escapeHtml(s.task_id)}</span>
                 </div>
                 <div class="subagent-list-right">
+                    ${this.renderUsageBadge(s.usage)}
                     <span class="subagent-status ${s.status}">${s.status === 'ok' ? '✅' : s.status === 'error' ? '❌' : '⏳'} ${s.status.toUpperCase()}</span>
                     ${s.duration ? `<span class="subagent-duration">${this.escapeHtml(s.duration)}</span>` : ''}
                 </div>
@@ -516,6 +517,7 @@ export const UI = {
         let html = `
             <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                 <span class="subagent-status ${statusClass}">${statusIcon} ${(detail.status || 'unknown').toUpperCase()}</span>
+                ${this.renderUsageBadge(detail.usage)}
                 ${detail.duration ? `<span class="subagent-duration">${this.escapeHtml(detail.duration)}</span>` : ''}
                 ${detail.started ? `<span class="subagent-duration">Started: ${this.escapeHtml(detail.started)}</span>` : ''}
             </div>
@@ -547,6 +549,7 @@ export const UI = {
                             <span class="chevron">▶</span>
                             Iteration ${iter.number}
                             <span style="color: var(--text-muted); font-weight: 400;">(${(iter.tool_calls || []).length} tool calls)</span>
+                            ${this.renderUsageBadge(iter.usage)}
                         </div>
                         <div class="subagent-iter-body hidden">
                             ${iter.model_response ? `<div class="subagent-model-resp">${this.escapeHtml(iter.model_response)}</div>` : ''}
