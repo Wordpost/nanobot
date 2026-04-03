@@ -379,9 +379,58 @@ function setupEventListeners() {
         if (state.activeSession) Router.loadSession(state.activeSession.filename);
     });
 
+    // Session list click — navigate or delete
     UI.dom.sessionList.addEventListener('click', (e) => {
+        // Delete button clicked
+        const delBtn = e.target.closest('.btn-delete-session');
+        if (delBtn) {
+            e.stopPropagation();
+            const filename = delBtn.dataset.filename;
+            if (confirm(`Удалить сессию ${filename}?`)) {
+                API.deleteSession(filename).then(() => {
+                    if (state.activeSession?.filename === filename) {
+                        state.update({ activeSession: null });
+                        UI.dom.chatView.classList.add('hidden');
+                        UI.dom.emptyState.classList.remove('hidden');
+                        window.location.hash = '';
+                    }
+                }).catch(err => console.error('Delete session error:', err));
+            }
+            return;
+        }
         const item = e.target.closest('.session-item');
         if (item) window.location.hash = `#/session/${item.dataset.filename}`;
+    });
+
+    // Delete session from chat header
+    document.getElementById('btn-delete-session')?.addEventListener('click', () => {
+        const filename = state.activeSession?.filename;
+        if (!filename) return;
+        if (confirm(`Удалить сессию ${filename}?`)) {
+            API.deleteSession(filename).then(() => {
+                state.update({ activeSession: null });
+                UI.dom.chatView.classList.add('hidden');
+                UI.dom.emptyState.classList.remove('hidden');
+                window.location.hash = '';
+            }).catch(err => console.error('Delete session error:', err));
+        }
+    });
+
+    // Delete message from chat
+    UI.dom.messages?.addEventListener('click', (e) => {
+        const delMsgBtn = e.target.closest('.btn-delete-msg');
+        if (delMsgBtn) {
+            e.stopPropagation();
+            const idx = parseInt(delMsgBtn.dataset.msgIndex, 10);
+            const filename = state.activeSession?.filename;
+            if (!filename || isNaN(idx)) return;
+            if (confirm(`Удалить сообщение #${idx + 1}?`)) {
+                API.deleteMessages(filename, [idx]).then(() => {
+                    Router.loadSession(filename);
+                }).catch(err => console.error('Delete message error:', err));
+            }
+            return;
+        }
     });
 
     // Logs panel open/close
@@ -430,7 +479,58 @@ function setupEventListeners() {
     document.getElementById('btn-close-subagent')?.addEventListener('click', () => {
         closeSubagentPanel();
     });
+
+    // ── Memory Panel ──────────────────────────────────────
+
+    UI.dom.memoryToggle?.addEventListener('click', () => {
+        const panel = UI.dom.memoryPanel;
+        if (panel && !panel.classList.contains('hidden')) {
+            panel.classList.add('hidden');
+        } else {
+            panel?.classList.remove('hidden');
+            // Load active tab
+            const activeTab = panel?.querySelector('.memory-tab.active');
+            const fileType = activeTab?.dataset.tab || 'history';
+            loadMemoryFile(fileType);
+        }
+    });
+
+    document.getElementById('btn-close-memory')?.addEventListener('click', () => {
+        UI.dom.memoryPanel?.classList.add('hidden');
+        UI.dom.memoryPanel?.classList.remove('expanded');
+    });
+
+    // Memory tab switching
+    document.querySelector('.memory-tabs')?.addEventListener('click', (e) => {
+        const tab = e.target.closest('.memory-tab');
+        if (!tab) return;
+        document.querySelectorAll('.memory-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        loadMemoryFile(tab.dataset.tab);
+    });
+
+    // Memory clear button (delegated)
+    UI.dom.memoryContent?.addEventListener('click', (e) => {
+        const clearBtn = e.target.closest('.btn-clear-memory');
+        if (!clearBtn) return;
+        const fileType = clearBtn.dataset.fileType;
+        if (confirm(`Очистить содержимое ${fileType.toUpperCase()}.md? Файл не будет удалён.`)) {
+            API.clearMemoryFile(fileType).then(() => {
+                loadMemoryFile(fileType);
+            }).catch(err => console.error('Clear memory error:', err));
+        }
+    });
+}
+
+async function loadMemoryFile(fileType) {
+    try {
+        const data = await API.fetchMemoryFile(fileType);
+        UI.renderMemoryPanel(data, fileType);
+    } catch (e) {
+        console.error('Failed to load memory file:', e);
+    }
 }
 
 init();
+
 

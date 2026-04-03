@@ -142,5 +142,37 @@ export const API = {
         };
         es.onerror = () => { if (onError) onError(); };
         return es;
+    },
+
+    // ── Session Management ───────────────────────────────────
+
+    async deleteSession(filename) {
+        const res = await fetch(`/api/sessions/${filename}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete session');
+        return await res.json();
+    },
+
+    async deleteMessages(filename, indices) {
+        const res = await fetch(`/api/sessions/${filename}/messages`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ indices })
+        });
+        if (!res.ok) throw new Error('Failed to delete messages');
+        return await res.json();
+    },
+
+    // ── Memory / History ─────────────────────────────────────
+
+    async fetchMemoryFile(fileType) {
+        const res = await fetch(`/api/memory/${fileType}`);
+        if (!res.ok) throw new Error(`Failed to fetch ${fileType}`);
+        return await res.json();
+    },
+
+    async clearMemoryFile(fileType) {
+        const res = await fetch(`/api/memory/${fileType}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Failed to clear ${fileType}`);
+        return await res.json();
     }
 };

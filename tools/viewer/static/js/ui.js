@@ -23,7 +23,10 @@ export const UI = {
         get subagentPanel() { return document.getElementById('subagent-panel'); },
         get subagentToggle() { return document.getElementById('subagent-toggle'); },
         get subagentListEl() { return document.getElementById('subagent-list'); },
-        get subagentDetailEl() { return document.getElementById('subagent-detail'); }
+        get subagentDetailEl() { return document.getElementById('subagent-detail'); },
+        get memoryPanel() { return document.getElementById('memory-panel'); },
+        get memoryToggle() { return document.getElementById('memory-toggle'); },
+        get memoryContent() { return document.getElementById('memory-content'); }
     },
 
     escapeHtml(str) {
@@ -236,7 +239,12 @@ export const UI = {
                     </div>
                     <div class="session-meta">
                         <span class="session-date">${s.updated_at ? this.formatDate(s.updated_at) : '...'}</span>
-                        <span class="session-size">${this.formatSize(s.size_bytes)}</span>
+                        <div class="session-meta-right">
+                            <span class="session-size">${this.formatSize(s.size_bytes)}</span>
+                            <button class="btn-delete-session" data-filename="${s.filename}" title="Удалить сессию">
+                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
@@ -286,11 +294,16 @@ export const UI = {
             if (spawnCard) return spawnCard;
             
             return `
-                <div class="message ${role}" style="--j: ${idx}">
+                <div class="message ${role}" style="--j: ${idx}" data-msg-index="${idx}">
                     <div class="message-header ${role === 'tool' ? 'tool-toggle' : ''}">
                         <span class="message-role">${role}</span>
-                        <span class="message-time">${time}</span>
-                        ${role === 'tool' ? '<i class="fas fa-chevron-down chevron"></i>' : ''}
+                        <div class="message-header-right">
+                            <span class="message-time">${time}</span>
+                            <button class="btn-delete-msg" data-msg-index="${idx}" title="Удалить сообщение">
+                                <svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                            </button>
+                            ${role === 'tool' ? '<i class="fas fa-chevron-down chevron"></i>' : ''}
+                        </div>
                     </div>
                     <div class="message-content ${role === 'tool' ? 'hidden' : ''}">${this.renderContent(m.content)}</div>
                     
@@ -656,5 +669,29 @@ export const UI = {
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
         return (bytes/1048576).toFixed(1) + ' MB';
+    },
+
+    // ── Memory Panel ────────────────────────────────────────
+
+    renderMemoryPanel(data, fileType) {
+        const el = this.dom.memoryContent;
+        if (!el) return;
+
+        const isEmpty = !data.content || data.content.trim() === '';
+        const sizeStr = this.formatSize(data.size_bytes || 0);
+
+        el.innerHTML = `
+            <div class="memory-file-header">
+                <div class="memory-file-name">${this.escapeHtml(data.filename || fileType.toUpperCase() + '.md')}</div>
+                <div class="memory-file-meta">
+                    <span class="memory-file-size">${sizeStr}</span>
+                    <button class="btn-clear-memory" data-file-type="${fileType}" ${isEmpty ? 'disabled' : ''} title="Очистить содержимое">Очистить</button>
+                </div>
+            </div>
+            <div class="memory-file-content">${isEmpty
+                ? '<div class="memory-empty">Файл пуст</div>'
+                : `<pre>${this.escapeHtml(data.content)}</pre>`
+            }</div>
+        `;
     }
 };

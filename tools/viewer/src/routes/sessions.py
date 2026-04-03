@@ -1,12 +1,23 @@
 import asyncio
 import json
+import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import List
 from ..config import SESSIONS_DIR
 from ..parser import SessionParser
 from ..schemas import SessionListResponse, SessionDetail, SessionMetadata
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+logger = logging.getLogger("session-viewer")
+
+
+def _validate_filename(filename: str):
+    """Guard against path traversal."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
 
 def _build_session_list():
@@ -96,8 +107,7 @@ async def watch_sessions():
 @router.get("/{filename}", response_model=SessionDetail)
 async def get_session_detail(filename: str):
     """Get full message history for a single session."""
-    if ".." in filename or "/" in filename or "\\" in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
+    _validate_filename(filename)
 
     filepath = SESSIONS_DIR / filename
     if not filepath.exists():
@@ -105,3 +115,75 @@ async def get_session_detail(filename: str):
 
     parser = SessionParser(filepath)
     return parser.load_full()
+
+
+# ── DELETE endpoints ────────────────────────────────────────
+
+
+@router.delete("/{filename}")
+async def delete_session(filename: str):
+    """Delete an entire session file."""
+    _validate_filename(filename)
+
+    filepath = SESSIONS_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    filepath.unlink()
+    logger.info(f"[sessions] Deleted session file: {filename}")
+    return {"status": "ok", "message": f"Session {filename} deleted"}
+
+
+class DeleteMessagesRequest(BaseModel):
+    indices: List[int]
+
+
+@router.delete("/{filename}/messages")
+async def delete_messages(filename: str, body: DeleteMessagesRequest):
+    """Delete specific messages by their indices (0-based, among messages only)."""
+    _validate_filename(filename)
+
+    filepath = SESSIONS_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    indices_set = set(body.indices)
+    if not indices_set:
+        raise HTTPException(status_code=400, detail="No indices provided")
+
+    parser = SessionParser(filepath)
+    metadata_obj = None
+    messages = []
+
+    for obj in parser.stream_objects():
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("_type") == "metadata":
+            metadata_obj = obj
+        elif "role" in obj:
+            messages.append(obj)
+        elif "messages" in obj:
+            metadata_obj = {k: v for k, v in obj.items() if k != "messages"}
+            messages.extend(obj["messages"])
+
+    max_idx = len(messages) - 1
+    invalid = [i for i in indices_set if i < 0 or i > max_idx]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid indices: {invalid}. Max index: {max_idx}")
+
+    kept = [m for i, m in enumerate(messages) if i not in indices_set]
+    deleted_count = len(messages) - len(kept)
+
+    # Update metadata timestamp
+    if metadata_obj:
+        metadata_obj["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    # Rewrite file: metadata line + one message per line
+    with open(filepath, "w", encoding="utf-8") as f:
+        if metadata_obj:
+            f.write(json.dumps(metadata_obj, ensure_ascii=False) + "\n")
+        for m in kept:
+            f.write(json.dumps(m, ensure_ascii=False) + "\n")
+
+    logger.info(f"[sessions] Deleted {deleted_count} message(s) from {filename}")
+    return {"status": "ok", "deleted": deleted_count, "remaining": len(kept)}
