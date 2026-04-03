@@ -1400,24 +1400,97 @@ em {
     margin-top: 0;
 }
 
-/* ── Subagent Final Result ── */
+/* ── Subagent Premium Result ── */
 
-.subagent-final-result {
-    margin-top: 8px;
-    padding: 10px 12px;
-    background: rgba(0, 255, 127, 0.04);
-    border: 1px solid rgba(0, 255, 127, 0.15);
-    border-radius: var(--radius-sm);
-    font-size: 12.5px;
-    color: var(--text-primary);
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
+.subagent-result-toolbar {
+    margin-top: 32px;
+    margin-bottom: 0;
+    padding: 10px 20px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-bottom: none;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
 }
 
-.subagent-final-result.error {
-    background: rgba(255, 60, 60, 0.04);
-    border-color: rgba(255, 60, 60, 0.15);
+.subagent-result-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.subagent-result-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-copy-result {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-muted);
+    color: var(--text-muted);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-copy-result:hover {
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+    background: rgba(0, 212, 255, 0.05);
+}
+
+.btn-copy-result.copied {
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+    background: rgba(0, 255, 127, 0.05);
+}
+
+.subagent-result-container {
+    position: relative;
+    border: 1px solid var(--border-default);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    background: var(--bg-tertiary);
+    background-image: 
+        radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 24px 24px;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    animation: slideUp var(--transition-normal) ease-out;
+}
+
+.subagent-result-container.ok { border-top: 1px solid var(--accent-green); }
+.subagent-result-container.error { border-top: 1px solid var(--accent-red); }
+
+.subagent-final-result {
+    padding: 24px 30px;
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--text-primary);
+    backdrop-filter: blur(8px);
+}
+
+.subagent-final-result .code-block {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-sm);
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Subagent Panel (bottom panel, like Docker Logs) ── */
@@ -1788,6 +1861,67 @@ em {
 }
 
 /* ── Agent Selector (Pool Mode) ─────────────────────────── */
+
+/* ── Reasoning Blocks ── */
+
+.reasoning-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    user-select: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.reasoning-toggle:hover {
+    background: rgba(0, 212, 255, 0.08);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+
+.reasoning-toggle .fa-brain {
+    font-size: 12px;
+    filter: drop-shadow(0 0 4px var(--accent-blue));
+}
+
+.reasoning-toggle .chevron {
+    font-size: 9px;
+    transition: transform var(--transition-fast);
+    opacity: 0.5;
+    margin-left: 4px;
+}
+
+.reasoning-toggle .chevron.open {
+    transform: rotate(180deg);
+}
+
+.reasoning-block {
+    margin-top: 8px;
+    padding: 14px;
+    background: rgba(0, 212, 255, 0.02);
+    border: 1px solid rgba(0, 212, 255, 0.1);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    font-style: italic;
+    border-left: 2px solid var(--accent-blue);
+}
+
+.reasoning-block.hidden {
+    display: none;
+}
+
 
 .panel-agent-selector {
     display: inline-flex;

@@ -17,6 +17,8 @@ class Message(BaseModel):
     timestamp: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     reasoning: Optional[str] = None
+    reasoning_content: Optional[str] = None
+    thinking_blocks: Optional[List[Dict[str, Any]]] = None
 
 class SessionDetail(BaseModel):
     metadata: Dict[str, Any]

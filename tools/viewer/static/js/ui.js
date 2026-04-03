@@ -46,11 +46,32 @@ export const UI = {
             if (typeof unwrapped === 'string') {
                 content = unwrapped;
             } else {
-                return `<pre>${this.escapeHtml(JSON.stringify(content, null, 2))}</pre>`;
+                return `<pre class="code-block">${this.escapeHtml(JSON.stringify(content, null, 2))}</pre>`;
             }
         }
 
+        // Auto-detect JSON string that isn't wrapped in backticks
+        const trimmed = content.trim();
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                return `<pre class="code-block">${this.escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+            } catch (e) { /* not JSON or malformed, continue to markdown */ }
+        }
+
         return this.renderMarkdown(content);
+    },
+
+    renderReasoning(m) {
+        if (m.reasoning_content) return this.renderContent(m.reasoning_content);
+        if (m.reasoning) return this.renderContent(m.reasoning);
+        if (m.thinking_blocks) {
+            return m.thinking_blocks
+                .filter(b => b.type === 'thinking')
+                .map(b => b.thinking || '')
+                .join('\n\n');
+        }
+        return '';
     },
 
     /**
@@ -324,11 +345,11 @@ export const UI = {
                     </div>
                     <div class="message-content ${role === 'tool' ? 'hidden' : ''}">${this.renderContent(m.content)}</div>
                     
-                    ${m.reasoning ? `
+                    ${(m.reasoning || m.reasoning_content || m.thinking_blocks) ? `
                         <div class="reasoning-toggle">
                             <i class="fas fa-brain"></i> REASONING <i class="fas fa-chevron-down chevron"></i>
                         </div>
-                        <div class="reasoning-block hidden">${this.renderContent(m.reasoning)}</div>
+                        <div class="reasoning-block hidden">${this.renderReasoning(m)}</div>
                     ` : ''}
                     
                     ${this.renderToolCalls(m.tool_calls)}
@@ -379,6 +400,26 @@ export const UI = {
                 if (content) {
                     content.classList.toggle('hidden');
                     if (chevron) chevron.classList.toggle('open', !content.classList.contains('hidden'));
+                }
+                return;
+            }
+
+            // Handle copy result button
+            const copyBtn = e.target.closest('.btn-copy-result');
+            if (copyBtn) {
+                const container = copyBtn.closest('.subagent-detail') || copyBtn.closest('#subagent-detail');
+                const textarea = container ? container.querySelector('.hidden-copy-area') : null;
+                if (textarea) {
+                    navigator.clipboard.writeText(textarea.value).then(() => {
+                        const icon = copyBtn.querySelector('i');
+                        const originalClass = icon.className;
+                        icon.className = 'fas fa-check';
+                        copyBtn.classList.add('copied');
+                        setTimeout(() => {
+                            icon.className = originalClass;
+                            copyBtn.classList.remove('copied');
+                        }, 2000);
+                    });
                 }
                 return;
             }
@@ -478,11 +519,11 @@ export const UI = {
                             </div>
                         </div>
                         ${this.renderToolCalls(otherCalls)}
-                        ${msg.reasoning ? `
+                        ${(msg.reasoning || msg.reasoning_content || msg.thinking_blocks) ? `
                             <div class="reasoning-toggle">
                                 <i class="fas fa-brain"></i> REASONING <i class="fas fa-chevron-down chevron"></i>
                             </div>
-                            <div class="reasoning-block hidden">${this.renderContent(msg.reasoning)}</div>
+                            <div class="reasoning-block hidden">${this.renderReasoning(msg)}</div>
                         ` : ''}
                     </div>
                 `;
@@ -508,7 +549,8 @@ export const UI = {
                 <div class="subagent-item-header">
                     <span class="subagent-list-label">${this.escapeHtml(s.label || s.filename)}</span>
                     <span class="subagent-list-id">${this.escapeHtml(s.task_id)}</span>
-                        <div class="subagent-item-footer">
+                </div>
+                <div class="subagent-item-footer">
                     <div class="subagent-usage-block">
                         ${this.renderUsageBadge(s.usage)}
                     </div>
@@ -579,9 +621,29 @@ export const UI = {
             }).join('');
         }
 
-        // Final result
+        // Final result - Premium Report Card
         if (detail.final_result) {
-            html += `<div class="subagent-final-result ${statusClass}">${this.escapeHtml(detail.final_result)}</div>`;
+            const label = detail.status === 'error' ? 'ERROR REPORT' : 'EXECUTION CONCLUSION';
+            const rawText = typeof detail.final_result === 'string'
+                ? detail.final_result
+                : JSON.stringify(detail.final_result, null, 2);
+
+            html += `
+                <div class="subagent-result-toolbar">
+                    <div class="subagent-result-header">
+                        <i class="fas fa-flag-checkered"></i> <span>${label}</span>
+                    </div>
+                    <div class="subagent-result-actions">
+                        <button class="btn-copy-result" title="Copy to Clipboard">
+                            <i class="far fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="subagent-result-container ${statusClass}">
+                    <div class="subagent-final-result">${this.renderContent(detail.final_result)}</div>
+                    <textarea class="hidden-copy-area" style="display:none;">${this.escapeHtml(rawText)}</textarea>
+                </div>
+            `;
         }
 
         el.innerHTML = html;
