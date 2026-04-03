@@ -6,11 +6,23 @@ provides the bridge by POSTing structured payloads to a peer's WebhookChannel
 endpoint.
 
 Configuration lives in ``workspace/swarm.json`` (never in core config.json).
+
+Minimal config example::
+
+    {
+        "peers": {
+            "aggregator": "secret-token"
+        }
+    }
+
+The peer URL is auto-resolved as ``http://{peer_name}:{port}/webhook/swarm``
+unless explicitly overridden.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -25,10 +37,13 @@ class HandoffTool(Tool):
     """Tool to hand off tasks to peer agents in the swarm (fork-local)."""
 
     _SWARM_CONFIG_FILE = "swarm.json"
+    _DEFAULT_PORT = 1987
+    _DEFAULT_SLOT_PATH = "/webhook/swarm"
 
     def __init__(self, workspace: Path) -> None:
         self._workspace = workspace
         self._config = self._load_config()
+        self._peers = self._normalize_peers()
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
         # Swarm context inherited from incoming swarm messages
@@ -57,7 +72,7 @@ class HandoffTool(Tool):
 
     @property
     def description(self) -> str:
-        peers = list(self._config.get("peers", {}).keys())
+        peers = list(self._peers.keys())
         peer_list = ", ".join(peers) if peers else "none configured"
         return (
             "Hand off a task to another agent in the swarm. "
@@ -72,7 +87,7 @@ class HandoffTool(Tool):
 
     @property
     def parameters(self) -> dict[str, Any]:
-        peers = list(self._config.get("peers", {}).keys())
+        peers = list(self._peers.keys())
         return {
             "type": "object",
             "properties": {
@@ -110,20 +125,16 @@ class HandoffTool(Tool):
         **kwargs: Any,
     ) -> str:
         """Execute handoff: POST payload to target agent's webhook."""
-        peers = self._config.get("peers", {})
-        if target not in peers:
-            available = list(peers.keys())
+        if target not in self._peers:
+            available = list(self._peers.keys())
             return (
                 f"Error: Unknown peer '{target}'. "
                 f"Available peers: {available}"
             )
 
-        peer = peers[target]
-        url = peer.get("url", "")
-        token = peer.get("token", "")
-
-        if not url:
-            return f"Error: No URL configured for peer '{target}'"
+        peer = self._peers[target]
+        url = peer["url"]
+        token = peer["token"]
 
         # ---- Anti-loop protection ----
         hop_count = self._swarm_ctx.get("_hop_count", 0) + 1
@@ -141,13 +152,13 @@ class HandoffTool(Tool):
 
         # ---- Build payload ----
         chain_id = self._swarm_ctx.get("_chain_id") or uuid.uuid4().hex[:8]
-        role = self._config.get("role", "unknown")
+        identity = self._get_identity()
 
         payload: dict[str, Any] = {
             "task": task,
             "data": data,
             "origin": {
-                "agent": role,
+                "agent": identity,
                 "url": self._build_self_url(),
             },
             "chain_id": chain_id,
@@ -193,6 +204,72 @@ class HandoffTool(Tool):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _get_identity(self) -> str:
+        """Determine this agent's name.
+
+        Priority: explicit ``name`` in swarm.json → HOSTNAME env var → fallback.
+        """
+        explicit = self._config.get("name") or self._config.get("role")
+        if explicit:
+            return explicit
+        return os.environ.get("HOSTNAME", "unknown-agent")
+
+    def _build_self_url(self) -> str:
+        """Construct this agent's own webhook URL for callbacks (fork-local)."""
+        explicit = self._config.get("self_url")
+        if explicit:
+            return explicit
+
+        port = self._config.get("port", self._DEFAULT_PORT)
+        host = self._get_identity()
+        return f"http://{host}:{port}{self._DEFAULT_SLOT_PATH}"
+
+    def _build_peer_url(self, peer_name: str) -> str:
+        """Construct a peer's webhook URL using convention.
+
+        Uses ``url_template`` from config if available, otherwise defaults to
+        ``http://{target}:{port}/webhook/swarm``.
+        """
+        port = self._config.get("port", self._DEFAULT_PORT)
+        template = self._config.get(
+            "url_template",
+            f"http://{{target}}:{port}{self._DEFAULT_SLOT_PATH}",
+        )
+        return template.replace("{target}", peer_name)
+
+    def _normalize_peers(self) -> dict[str, dict[str, str]]:
+        """Normalize peers to full format.
+
+        Supports two formats in swarm.json::
+
+            # Short: just a token string
+            "peers": { "aggregator": "secret-token" }
+
+            # Full: object with token and optional url
+            "peers": { "aggregator": { "token": "secret-token", "url": "http://..." } }
+
+        Returns a dict of ``{ name: { "token": str, "url": str } }``.
+        """
+        raw_peers = self._config.get("peers", {})
+        normalized: dict[str, dict[str, str]] = {}
+
+        for name, value in raw_peers.items():
+            if isinstance(value, str):
+                # Short format: value is the token
+                normalized[name] = {
+                    "token": value,
+                    "url": self._build_peer_url(name),
+                }
+            elif isinstance(value, dict):
+                # Full format: object with explicit fields
+                token = value.get("token", "")
+                url = value.get("url") or self._build_peer_url(name)
+                normalized[name] = {"token": token, "url": url}
+            else:
+                logger.warning("Swarm: invalid peer config for '{}', skipping", name)
+
+        return normalized
+
     def _load_config(self) -> dict[str, Any]:
         """Load swarm.json from the agent's workspace."""
         path = self._workspace / self._SWARM_CONFIG_FILE
@@ -201,28 +278,13 @@ class HandoffTool(Tool):
             return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            role = data.get("role", "?")
             peers = list(data.get("peers", {}).keys())
-            logger.info("Swarm config loaded: role='{}', peers={}", role, peers)
+            identity = data.get("name") or data.get("role") or os.environ.get("HOSTNAME", "?")
+            logger.info("Swarm config loaded: identity='{}', peers={}", identity, peers)
             return data
         except (json.JSONDecodeError, OSError) as exc:
             logger.error("Failed to load swarm.json: {}", exc)
             return {}
-
-    def _build_self_url(self) -> str:
-        """Construct this agent's own webhook URL for callbacks."""
-        self_url = self._config.get("self_url")
-        if self_url:
-            return self_url
-
-        import os
-
-        # Use HOSTNAME (auto-set by Docker) or fallback to role-based name
-        host = os.environ.get("HOSTNAME", f"nanobot-{self._config.get('role', 'unknown')}")
-        url = f"http://{host}:1987/webhook/swarm"  # (fork-local) default to swarm slot path
-
-        logger.debug("Swarm: using {} as self_url (from HOSTNAME or role)", url)
-        return url
 
     def _log_handoff(
         self,
@@ -240,7 +302,7 @@ class HandoffTool(Tool):
 
         entry = {
             "timestamp": datetime.now().isoformat(),
-            "from": self._config.get("role", "unknown"),
+            "from": self._get_identity(),
             "to": target,
             "hop": hop_count,
             "type": msg_type,

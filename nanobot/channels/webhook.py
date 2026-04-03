@@ -27,15 +27,26 @@ from nanobot.bus.events import OutboundMessage
 # ------------------------------------------------------------------ #
 
 class WebhookSlot:
-    """A single named webhook receiver configuration."""
+    """A single named webhook receiver configuration.
+
+    Handler type is derived from the slot name for built-in types
+    (``swarm``, ``raw``).  All other names default to ``standard``.
+    Path defaults to ``/webhook/{name}`` (or ``/webhook`` for "default").
+    """
 
     __slots__ = ("name", "path", "token", "handler", "mappings", "session_key", "allow_from")
+
+    # Built-in handler types that auto-resolve from slot name
+    _BUILTIN_HANDLERS = frozenset({"swarm", "raw"})
 
     def __init__(self, name: str, cfg: dict[str, Any]) -> None:
         self.name = name
         self.path: str = cfg.get("path", f"/webhook/{name}" if name != "default" else "/webhook")
         self.token: str = cfg.get("token", "")
-        self.handler: str = cfg.get("handler", "standard")  # standard | swarm | raw
+        # Handler: explicit > derived from name > "standard"
+        self.handler: str = cfg.get(
+            "handler", name if name in self._BUILTIN_HANDLERS else "standard",
+        )
         self.mappings: dict[str, str] = cfg.get("mappings", {})
         self.session_key: str | None = cfg.get("sessionKey") or cfg.get("session_key")
         self.allow_from: list[str] = cfg.get("allowFrom", cfg.get("allow_from", ["*"]))
@@ -113,9 +124,7 @@ class WebhookChannel(BaseChannel):
             "port": 1987,
             "slots": {
                 "default": {
-                    "path": "/webhook",
                     "token": "",
-                    "handler": "standard",
                     "allowFrom": ["*"],
                     "mappings": {
                         "messageTemplate": "",
