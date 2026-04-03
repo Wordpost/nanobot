@@ -49,16 +49,22 @@ export class ConfigEditor {
 
             const agent = UI.getSelectedAgent('config-agent-selector');
             this.config = await API.fetchConfigManager(agent);
+            
+            if (!this.config) {
+                throw new Error("No configuration returned from server.");
+            }
+
             this.render();
 
             this.saveBtn.textContent = "Save Configuration";
-            this.saveBtn.disabled = !this.config.message; // disabled if show placeholder msg
+            this.saveBtn.disabled = !!this.config.message; // disabled if show placeholder msg
         } catch (err) {
             console.error(err);
-            this.contentContainer.innerHTML = `<div class="config-selection-required"><p>Error: ${err.message}</p></div>`;
+            this.config = { message: err.message || "Failed to load config" };
+            this.render();
             this.saveBtn.disabled = true;
         } finally {
-            if (!this.config?.message) {
+            if (this.config && !this.config.message) {
                 this.saveBtn.disabled = false;
             }
         }
@@ -72,11 +78,11 @@ export class ConfigEditor {
         this.navContainer.innerHTML = '';
         this.contentContainer.innerHTML = '';
 
-        if (this.config.message) {
+        if (!this.config || this.config.message) {
             this.contentContainer.innerHTML = `
                 <div class="config-selection-required">
-                    <div class="config-selection-icon">⚙️</div>
-                    <p>${this.config.message}</p>
+                    <div class="config-selection-icon">${!this.config ? '⚠️' : '⚙️'}</div>
+                    <p>${this.config?.message || "Configuration not found or not selected."}</p>
                 </div>
             `;
             this.saveBtn.style.display = 'none';
