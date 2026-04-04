@@ -21,7 +21,6 @@ unless explicitly overridden.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import uuid
@@ -49,10 +48,6 @@ class HandoffTool(Tool):
         self._origin_chat_id = "direct"
         # Swarm context inherited from incoming swarm messages
         self._swarm_ctx: dict[str, Any] = {}
-        # Session key for reply routing
-        self._session_key: str = ""
-        # Reusable HTTP session
-        self._http_session: aiohttp.ClientSession | None = None
 
     # ------------------------------------------------------------------
     # Context management
@@ -66,16 +61,6 @@ class HandoffTool(Tool):
     def set_swarm_context(self, metadata: dict[str, Any]) -> None:
         """Inject incoming swarm metadata so outgoing handoffs preserve the chain."""
         self._swarm_ctx = metadata if metadata.get("_swarm") else {}
-
-    def set_session_key(self, session_key: str) -> None:
-        """Set the current session key for reply routing."""
-        self._session_key = session_key
-
-    async def close(self) -> None:
-        """Cleanup reusable HTTP session."""
-        if self._http_session and not self._http_session.closed:
-            await self._http_session.close()
-            self._http_session = None
 
     # ------------------------------------------------------------------
     # Tool interface
@@ -134,7 +119,7 @@ class HandoffTool(Tool):
         target: str,
         task: str,
         data: str = "",
-        msg_type: str = "task",
+        type: str = "task",
         **kwargs: Any,
     ) -> str:
         """Execute handoff: POST payload to target agent's webhook."""
@@ -180,35 +165,32 @@ class HandoffTool(Tool):
                 "channel": self._origin_channel,
                 "chat_id": self._origin_chat_id,
             },
-            "type": msg_type,
-            "reply_to_session": self._session_key,
+            "type": type,
         }
 
         # ---- Send ----
         try:
-            session = await self._get_http_session()
-            headers: dict[str, str] = {"Content-Type": "application/json"}
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
+            async with aiohttp.ClientSession() as session:
+                headers: dict[str, str] = {"Content-Type": "application/json"}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
 
-            async with session.post(
-                url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                if resp.status == 200:
-                    asyncio.create_task(
-                        self._log_handoff_async(chain_id, target, hop_count, msg_type),
+                async with session.post(
+                    url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        self._log_handoff(chain_id, target, hop_count, type)
+                        return (
+                            f"✓ Task handed off to '{target}' "
+                            f"(chain: {chain_id}, hop: {hop_count}/{max_hops}). "
+                            "SUCCESS. Do NOT output any conversational text or 'continue' messages. End your turn immediately."
+                        )
+                    body_text = await resp.text()
+                    logger.error(
+                        "Handoff to '{}' failed: HTTP {} — {}",
+                        target, resp.status, body_text[:200],
                     )
-                    return (
-                        f"✓ Task handed off to '{target}' "
-                        f"(chain: {chain_id}, hop: {hop_count}/{max_hops}). "
-                        "SUCCESS. Do NOT output any conversational text or 'continue' messages. End your turn immediately."
-                    )
-                body_text = await resp.text()
-                logger.error(
-                    "Handoff to '{}' failed: HTTP {} — {}",
-                    target, resp.status, body_text[:200],
-                )
-                return f"Error: Handoff to '{target}' failed (HTTP {resp.status})"
+                    return f"Error: Handoff to '{target}' failed (HTTP {resp.status})"
 
         except aiohttp.ClientError as exc:
             logger.error("Handoff connection error to '{}': {}", target, exc)
@@ -253,12 +235,6 @@ class HandoffTool(Tool):
             f"http://{{target}}:{port}{self._DEFAULT_SLOT_PATH}",
         )
         return template.replace("{target}", peer_name)
-
-    async def _get_http_session(self) -> aiohttp.ClientSession:
-        """Get or create a reusable HTTP session."""
-        if self._http_session is None or self._http_session.closed:
-            self._http_session = aiohttp.ClientSession()
-        return self._http_session
 
     def _normalize_peers(self) -> dict[str, dict[str, str]]:
         """Normalize peers to full format.
@@ -335,13 +311,3 @@ class HandoffTool(Tool):
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("Failed to write swarm chain log: {}", exc)
-
-    async def _log_handoff_async(
-        self,
-        chain_id: str,
-        target: str,
-        hop_count: int,
-        msg_type: str,
-    ) -> None:
-        """Non-blocking log write via asyncio.to_thread."""
-        await asyncio.to_thread(self._log_handoff, chain_id, target, hop_count, msg_type)

@@ -305,13 +305,7 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(
-        self,
-        channel: str,
-        chat_id: str,
-        message_id: str | None = None,
-        session_key: str | None = None,
-    ) -> None:
+    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
             if tool := self.tools.get(name):
@@ -321,8 +315,6 @@ class AgentLoop:
         if handoff := self.tools.get("handoff"):
             if hasattr(handoff, "set_context"):
                 handoff.set_context(channel, chat_id)
-            if hasattr(handoff, "set_session_key") and session_key:
-                handoff.set_session_key(session_key)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -538,7 +530,7 @@ class AgentLoop:
             if self._restore_runtime_checkpoint(session):
                 self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"), session_key=key)
+            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             history = session.get_history(max_messages=0)
             current_role = "user"
             messages = self.context.build_messages(
@@ -574,7 +566,7 @@ class AgentLoop:
 
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"), session_key=key)
+        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         # Swarm: inject incoming swarm metadata into HandoffTool (fork-local)
         if handoff := self.tools.get("handoff"):
             if hasattr(handoff, "set_swarm_context"):
