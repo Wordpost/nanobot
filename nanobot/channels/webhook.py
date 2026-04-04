@@ -20,6 +20,8 @@ from loguru import logger
 
 from nanobot.channels.base import BaseChannel
 from nanobot.bus.events import OutboundMessage
+from nanobot.config.paths import get_workspace_path  # (fork-local)
+from nanobot.session.manager import SessionManager   # (fork-local)
 
 
 # ------------------------------------------------------------------ #
@@ -69,6 +71,7 @@ class WebhookChannel(BaseChannel):
         super().__init__(config, bus)
         self._stop_event = asyncio.Event()
         self._slots: dict[str, WebhookSlot] = {}  # path → slot
+        self._session_mgr: SessionManager | None = None  # (fork-local) lazy init
         self._build_slots()
 
     # ------------------------------------------------------------------ #
@@ -287,12 +290,18 @@ class WebhookChannel(BaseChannel):
         origin = body.get("origin", {})
         chain_id = body.get("chain_id", "default")
 
-        # Validate required swarm fields
-        if not task:
-            return web.json_response({"error": "Missing 'task' field"}, status=400)
-
         sender = origin.get("agent", "swarm")
         session_key = f"swarm:{chain_id}"
+
+        # (fork-local) Validate required swarm fields — log error to session
+        if not task:
+            self._log_to_session(
+                session_key,
+                f"[VALIDATION ERROR] Missing 'task' field from '{sender}' "
+                f"via slot '{slot.name}' (chain={chain_id}). "
+                f"Raw keys: {list(body.keys())}",
+            )
+            return web.json_response({"error": "Missing 'task' field"}, status=400)
 
         # Machine metadata — accessible to HandoffTool, hidden from LLM
         metadata = {
@@ -333,6 +342,14 @@ class WebhookChannel(BaseChannel):
             metadata=metadata,
         )
 
+        # (fork-local) Log successful swarm handoff to session
+        self._log_to_session(
+            session_key,
+            f"[SWARM OK] type={msg_type} from='{sender}' slot='{slot.name}' "
+            f"chain={chain_id} hop={body.get('hop_count', 0)} "
+            f"task={task[:120]}",
+        )
+
         return web.json_response({"ok": True, "swarm": True, "chain_id": chain_id})
 
     # ------------------------------------------------------------------ #
@@ -354,6 +371,42 @@ class WebhookChannel(BaseChannel):
         )
 
         return web.json_response({"ok": True, "slot": slot.name})
+
+    # ------------------------------------------------------------------ #
+    # Session logging (fork-local)                                        #
+    # ------------------------------------------------------------------ #
+
+    def _get_session_manager(self) -> SessionManager:
+        """Lazily initialize and return a SessionManager instance (fork-local)."""
+        if self._session_mgr is None:
+            workspace = get_workspace_path(
+                self._cfg("workspace"),
+            )
+            self._session_mgr = SessionManager(workspace)
+        return self._session_mgr
+
+    def _log_to_session(self, session_key: str, content: str) -> None:
+        """Append a webhook_log entry directly into the session file (fork-local).
+
+        Records with ``_type: webhook_log`` are automatically excluded from
+        ``Session.get_history()`` (see manager.py:42), so they never reach the
+        LLM but remain visible in the Forensic Viewer and raw JSONL.
+        """
+        try:
+            mgr = self._get_session_manager()
+            session = mgr.get_or_create(session_key)
+            session.add_message(
+                role="system",
+                content=content,
+                _type="webhook_log",
+            )
+            mgr.save(session)
+            logger.debug("webhook_log written to session '{}'", session_key)
+        except Exception as exc:
+            logger.warning(
+                "Failed to write webhook_log to session '{}': {}",
+                session_key, exc,
+            )
 
     # ------------------------------------------------------------------ #
     # Template engine (unchanged)                                         #
