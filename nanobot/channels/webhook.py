@@ -209,6 +209,10 @@ class WebhookChannel(BaseChannel):
             logger.error("Received non-JSON content on {}", path)
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
+        if not isinstance(body, dict):
+            logger.warning("Received non-object JSON on {}", path)
+            return web.json_response({"error": "Expected JSON object"}, status=400)
+
         # Dispatch by handler type
         if slot.handler == "swarm":
             return await self._handle_swarm(slot, body)
@@ -292,7 +296,21 @@ class WebhookChannel(BaseChannel):
             return web.json_response({"error": "Missing 'task' field"}, status=400)
 
         sender = origin.get("agent", "swarm")
+
+        if not self._is_allowed_by_slot(slot, sender):
+            logger.warning("Access denied for sender {} on slot '{}'", sender, slot.name)
+            return web.json_response({"error": "Forbidden"}, status=403)
+
         session_key = f"swarm:{chain_id}"
+
+        # Route result back to the original session if reply_to_session is set
+        reply_to_session = body.get("reply_to_session")
+        if msg_type == "result" and reply_to_session:
+            session_key = reply_to_session
+            logger.info(
+                "Swarm result routing back to original session: {}",
+                reply_to_session,
+            )
 
         # Machine metadata — accessible to HandoffTool, hidden from LLM
         metadata = {
@@ -331,6 +349,7 @@ class WebhookChannel(BaseChannel):
             content=text,
             media=[],
             metadata=metadata,
+            session_key=session_key,
         )
 
         return web.json_response({"ok": True, "swarm": True, "chain_id": chain_id})
@@ -344,6 +363,10 @@ class WebhookChannel(BaseChannel):
         text = json.dumps(body, indent=2, ensure_ascii=False)
         chat_id = slot.session_key or f"webhook:{slot.name}"
         sender = f"webhook:{slot.name}"
+
+        if not self._is_allowed_by_slot(slot, sender):
+            logger.warning("Access denied for sender {} on slot '{}'", sender, slot.name)
+            return web.json_response({"error": "Forbidden"}, status=403)
 
         await self._handle_message(
             sender_id=sender,
