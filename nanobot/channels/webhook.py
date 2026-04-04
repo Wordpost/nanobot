@@ -81,6 +81,16 @@ class WebhookChannel(BaseChannel):
             return self.config.get(key, default)
         return getattr(self.config, key, default)
 
+    def is_allowed(self, sender_id: str) -> bool:
+        """Override to support dict-based configs (fork-local)."""
+        allow_list = self._cfg("allow_from", self._cfg("allowFrom", []))
+        if not allow_list:
+            logger.warning("{}: allow_from is empty — all access denied", self.name)
+            return False
+        if "*" in allow_list:
+            return True
+        return str(sender_id) in allow_list
+
     def _build_slots(self) -> None:
         """Build slot registry from config.slots."""
         slots_cfg = self._cfg("slots")
@@ -281,16 +291,8 @@ class WebhookChannel(BaseChannel):
         if not task:
             return web.json_response({"error": "Missing 'task' field"}, status=400)
 
-        # Build LLM-visible content
-        content_parts: list[str] = [task]
-        if data:
-            if isinstance(data, str) and data.strip():
-                content_parts.append(f"\nДанные:\n{data}")
-            elif isinstance(data, (dict, list)):
-                content_parts.append(
-                    f"\nДанные:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
-                )
-        text = "\n".join(content_parts)
+        sender = origin.get("agent", "swarm")
+        session_key = f"swarm:{chain_id}"
 
         # Machine metadata — accessible to HandoffTool, hidden from LLM
         metadata = {
@@ -303,8 +305,19 @@ class WebhookChannel(BaseChannel):
             "_slot": slot.name,
         }
 
-        sender = origin.get("agent", "swarm")
-        session_key = f"swarm:{chain_id}"
+        # Build LLM-visible content (fork-local: inject swarm context)
+        content_parts: list[str] = [
+            f"[Swarm Metadata]\nOrigin: {sender}\nType: {msg_type}\nChain: {chain_id}\n---",
+            task
+        ]
+        if data:
+            if isinstance(data, str) and data.strip():
+                content_parts.append(f"\nДанные:\n{data}")
+            elif isinstance(data, (dict, list)):
+                content_parts.append(
+                    f"\nДанные:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+                )
+        text = "\n".join(content_parts)
 
         logger.info(
             "Swarm {} from '{}' via slot '{}' (chain={}, hop={}): {}",

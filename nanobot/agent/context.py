@@ -105,9 +105,12 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
     def _get_swarm_instructions(self) -> str:
         """Instructions for the agent when operating in a swarm (fork-local)."""
         return """# Swarm Mode (Active)
-- Use `handoff` to delegate tasks (`type="task"`) or return results (`type="result"`).
-- Always pass state/data via the `data` parameter (JSON).
-- If in a swarm chain, prioritize returning findings to peers over chatting with the human."""
+- IMPORTANT: Messages starting with [Swarm Metadata] are from other AGENTS, not humans.
+- YOU MUST NEVER reply with plain text to messages containing Swarm Metadata.
+- If the incoming message is just an acknowledgment, greeting, or status update that doesn't require a concrete answer, DO NOT call `handoff`. Just stop.
+- When you DO need to delegate or return a required result, use the `handoff` tool.
+- Use the `Origin` name from the [Swarm Metadata] as the `target` for your response.
+- Once you call `handoff`, your turn is over. DO NOT output any conversational text or 'continue' messages after the tool returns success."""
 
 
     @staticmethod

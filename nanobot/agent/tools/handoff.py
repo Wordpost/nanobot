@@ -75,14 +75,12 @@ class HandoffTool(Tool):
         peers = list(self._peers.keys())
         peer_list = ", ".join(peers) if peers else "none configured"
         return (
-            "Hand off a task to another agent in the swarm. "
-            "Use this when a task requires a different specialist agent "
-            "(e.g. parser → aggregator, coder → tester). "
-            "The target agent will process the task independently and can "
-            "send results back via its own handoff. "
-            f"Available peers: [{peer_list}]. "
-            "Types: 'task' (new work), 'result' (return findings), "
-            "'notification' (lightweight status update)."
+            "Communication channel between swarm agents. "
+            "MANDATORY: Use this tool with type='peer-response' or type='result' to reply to incoming Swarm tasks. "
+            "Use type='task' to delegate new sub-tasks to specialists. "
+            "NEVER use plain text to communicate with peer agents; always use THIS tool. "
+            f"Available target peers: [{peer_list}]. "
+            "Types: 'task' (delegation), 'result' (returning answer to origin), 'notification' (status)."
         )
 
     @property
@@ -184,7 +182,8 @@ class HandoffTool(Tool):
                         self._log_handoff(chain_id, target, hop_count, type)
                         return (
                             f"✓ Task handed off to '{target}' "
-                            f"(chain: {chain_id}, hop: {hop_count}/{max_hops})"
+                            f"(chain: {chain_id}, hop: {hop_count}/{max_hops}). "
+                            "SUCCESS. Do NOT output any conversational text or 'continue' messages. End your turn immediately."
                         )
                     body_text = await resp.text()
                     logger.error(
