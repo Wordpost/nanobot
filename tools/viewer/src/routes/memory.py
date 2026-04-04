@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/memory", tags=["memory"])
 logger = logging.getLogger("session-viewer")
 
 _FILE_MAP = {
-    "history": "HISTORY.md",
+    "history": "history.jsonl",
     "memory": "MEMORY.md",
 }
 
@@ -27,7 +27,7 @@ def _resolve_path(file_type: str, agent: Optional[str] = None):
 
 @router.get("/{file_type}")
 async def get_memory_file(file_type: str, agent: Optional[str] = Query(None)):
-    """Read contents of HISTORY.md or MEMORY.md."""
+    """Read contents of history.jsonl or MEMORY.md."""
     if not agent or agent in ["", "all", "undefined"]:
         return {
             "file_type": file_type, 

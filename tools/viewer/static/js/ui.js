@@ -776,18 +776,80 @@ export const UI = {
         const isEmpty = !data.content || data.content.trim() === '';
         const sizeStr = this.formatSize(data.size_bytes || 0);
 
+        let contentHtml = '';
+        if (isEmpty) {
+            contentHtml = '<div class="memory-empty">Файл пуст</div>';
+        } else if (fileType === 'history') {
+            try {
+                const lines = data.content.split('\n').filter(l => l.trim() !== '');
+                const items = lines.map(l => JSON.parse(l));
+
+                contentHtml = '<div style="display: flex; flex-direction: column;">' + items.map(item => {
+                    const dt = item.timestamp ? item.timestamp : '';
+                    const rawRole = String(item.role || item.event || item._type || 'sys').toLowerCase();
+                    const badgeText = rawRole.toUpperCase();
+
+                    // Match variables from style.css
+                    let badgeColor = 'var(--text-secondary)';
+                    let badgeBg = 'var(--bg-tertiary)';
+                    let badgeBorder = 'var(--border-default)';
+
+                    if (rawRole.includes('user')) {
+                        badgeColor = 'var(--role-user)';
+                        badgeBg = 'var(--role-user-bg)';
+                        badgeBorder = 'var(--role-user-bg)';
+                    } else if (rawRole.includes('assistant') || rawRole.includes('agent')) {
+                        badgeColor = 'var(--role-assistant)';
+                        badgeBg = 'var(--role-assistant-bg)';
+                        badgeBorder = 'var(--role-assistant-bg)';
+                    } else if (rawRole.includes('tool') || rawRole.includes('sys')) {
+                        badgeColor = 'var(--accent-orange)';
+                        badgeBg = 'rgba(255, 92, 0, 0.05)';
+                        badgeBorder = 'rgba(255, 92, 0, 0.15)';
+                    }
+
+                    let displayHtml = '';
+                    if (item.content && typeof item.content === 'string') {
+                        displayHtml = this.renderContent(item.content);
+                    } else {
+                        const clone = { ...item };
+                        delete clone.timestamp;
+                        delete clone.role;
+                        delete clone._type;
+                        displayHtml = `<pre style="margin:0; padding:12px; background:var(--bg-primary); border:1px solid var(--border-default); border-radius:var(--radius-sm); font-size:12px; font-family:var(--font-mono); overflow-x:auto;">${this.escapeHtml(JSON.stringify(clone, null, 2))}</pre>`;
+                    }
+
+                    return `
+                        <div style="padding: 16px 20px; border-bottom: 1px solid var(--border-default); transition: background var(--transition-fast);" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--role-assistant-bg)'">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <span style="font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder}; text-transform: uppercase; letter-spacing: 0.5px;">${this.escapeHtml(badgeText)}</span>
+                                <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">${this.escapeHtml(dt)}</span>
+                            </div>
+                            <div style="font-size: 13.5px; color: var(--text-primary); line-height: 1.6; word-break: break-word;">
+                                ${displayHtml}
+                            </div>
+                        </div>
+                    `;
+                }).join('') + '</div>';
+            } catch (e) {
+                console.error('JSONL parse error:', e);
+                contentHtml = `<pre>${this.escapeHtml(data.content)}</pre>`;
+            }
+        } else {
+            contentHtml = `<pre>${this.escapeHtml(data.content)}</pre>`;
+        }
+
+        const ext = fileType === 'history' ? '.jsonl' : '.md';
+
         el.innerHTML = `
             <div class="memory-file-header">
-                <div class="memory-file-name">${this.escapeHtml(data.filename || fileType.toUpperCase() + '.md')}</div>
+                <div class="memory-file-name">${this.escapeHtml(data.filename || fileType.toUpperCase() + ext)}</div>
                 <div class="memory-file-meta">
                     <span class="memory-file-size">${sizeStr}</span>
                     <button class="btn-clear-memory" data-file-type="${fileType}" ${isEmpty ? 'disabled' : ''} title="Очистить содержимое">Очистить</button>
                 </div>
             </div>
-            <div class="memory-file-content">${isEmpty
-                ? '<div class="memory-empty">Файл пуст</div>'
-                : `<pre>${this.escapeHtml(data.content)}</pre>`
-            }</div>
+            <div class="memory-file-content">${contentHtml}</div>
         `;
     },
 
