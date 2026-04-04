@@ -26,7 +26,6 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.agent.tools.handoff import HandoffTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
@@ -274,10 +273,6 @@ class AgentLoop:
             self.tools.register(WebFetchTool(proxy=self.web_config.proxy))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
-        # Swarm: register handoff tool if swarm.json exists (fork-local)
-        swarm_config_path = self.workspace / "swarm.json"
-        if swarm_config_path.exists():
-            self.tools.register(HandoffTool(workspace=self.workspace))
         if self.cron_service:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
@@ -311,10 +306,6 @@ class AgentLoop:
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
-        # Swarm: update handoff tool context (fork-local)
-        if handoff := self.tools.get("handoff"):
-            if hasattr(handoff, "set_context"):
-                handoff.set_context(channel, chat_id)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -532,7 +523,7 @@ class AgentLoop:
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             history = session.get_history(max_messages=0)
-            current_role = "user"
+            current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
@@ -567,10 +558,6 @@ class AgentLoop:
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
-        # Swarm: inject incoming swarm metadata into HandoffTool (fork-local)
-        if handoff := self.tools.get("handoff"):
-            if hasattr(handoff, "set_swarm_context"):
-                handoff.set_swarm_context(msg.metadata or {})
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()

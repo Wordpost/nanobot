@@ -29,10 +29,6 @@ class ContextBuilder:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
 
-        # Swarm instructions (fork-local)
-        if (self.workspace / "swarm.json").exists():
-            parts.append(self._get_swarm_instructions())
-
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
@@ -77,7 +73,9 @@ Skills with available="false" need dependencies installed first - you can try in
 - Use file tools when they are simpler or more reliable than shell commands.
 """
 
-        return f"""You are a helpful AI assistant.
+        return f"""# nanobot 🐈
+
+You are nanobot, a helpful AI assistant.
 
 ## Runtime
 {runtime}
@@ -90,7 +88,7 @@ Your workspace is at: {workspace_path}
 
 {platform_policy}
 
-## Guidelines
+## nanobot Guidelines
 - State intent before tool calls, but NEVER predict or claim results before receiving them.
 - Before modifying a file, read it first. Do not assume files or directories exist.
 - After writing or editing a file, re-read it if accuracy matters.
@@ -101,17 +99,6 @@ Your workspace is at: {workspace_path}
 
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel.
 IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST call the 'message' tool with the 'media' parameter. Do NOT use read_file to "send" a file — reading a file only shows its content to you, it does NOT deliver the file to the user. Example: message(content="Here is the file", media=["/path/to/file.png"])"""
-
-    def _get_swarm_instructions(self) -> str:
-        """Instructions for the agent when operating in a swarm (fork-local)."""
-        return """# Swarm Mode (Active)
-- IMPORTANT: Messages starting with [Swarm Metadata] are from other AGENTS, not humans.
-- YOU MUST NEVER reply with plain text to messages containing Swarm Metadata.
-- If the incoming message is just an acknowledgment, greeting, or status update that doesn't require a concrete answer, DO NOT call `handoff`. Just stop.
-- When you DO need to delegate or return a required result, use the `handoff` tool.
-- Use the `Origin` name from the [Swarm Metadata] as the `target` for your response.
-- Once you call `handoff`, your turn is over. DO NOT output any conversational text or 'continue' messages after the tool returns success."""
-
 
     @staticmethod
     def _build_runtime_context(
