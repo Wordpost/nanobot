@@ -1,59 +1,73 @@
 /* ═══════════════════════════════════════════
-   Nanobot Session Viewer — Design Tokens
-   Forensic Orange design system
+   Nanobot Session Viewer — Design Tokens v2
+   Premium Dark + Glassmorphism + Compact
    ═══════════════════════════════════════════ */
 
 :root {
-  /* Base palette: Deep Anthracite & Pure Black */
-  --bg-primary: #050505;
-  --bg-secondary: #0a0a0a;
-  --bg-tertiary: #111111;
-  --bg-hover: #1a1a1a;
-  --bg-active: #222222;
+  /* Base palette: Deep Anthracite with warmth */
+  --bg-primary: #08090c;
+  --bg-secondary: #0e1015;
+  --bg-tertiary: #14161c;
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --bg-active: rgba(255, 92, 0, 0.06);
+
+  /* Glass surface for overlays and cards */
+  --glass-bg: rgba(18, 20, 28, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-blur: 16px;
 
   /* Borders */
-  --border-default: #222222;
-  --border-muted: #111111;
-  --border-accent: #ff5c00;
+  --border-default: rgba(255, 255, 255, 0.07);
+  --border-muted: rgba(255, 255, 255, 0.04);
+  --border-accent: #ff6b1a;
 
   /* Text */
-  --text-primary: #ffffff;
-  --text-secondary: #a0a0a0;
-  --text-muted: #444444;
-  --text-link: #ff5c00;
+  --text-primary: #eaedf3;
+  --text-secondary: #8b92a5;
+  --text-muted: #3d4254;
+  --text-link: #ff6b1a;
 
   /* Role colors */
-  --role-user: #00ff7f;
-  --role-user-bg: rgba(0, 255, 127, 0.05);
-  --role-assistant: #00d4ff;
-  --role-assistant-bg: rgba(0, 212, 255, 0.05);
-  --role-tool: #f0f0f0;
-  --role-tool-bg: rgba(240, 240, 240, 0.03);
-  --role-system: #ff5c00;
+  --role-user: #34d399;
+  --role-user-bg: rgba(52, 211, 153, 0.06);
+  --role-assistant: #38bdf8;
+  --role-assistant-bg: rgba(56, 189, 248, 0.06);
+  --role-tool: #cbd5e1;
+  --role-tool-bg: rgba(203, 213, 225, 0.04);
+  --role-system: #ff6b1a;
 
-  /* Accent */
-  --accent-orange: #ff5c00;
-  --accent-blue: #00d4ff;
-  --accent-green: #00ff7f;
-  --accent-red: #ff3c3c;
+  /* Accent palette — Vivid Orange gradient */
+  --accent-orange: #ff6b1a;
+  --accent-orange-hover: #ff8a47;
+  --accent-blue: #38bdf8;
+  --accent-green: #34d399;
+  --accent-red: #f87171;
+  --accent-amber: #fbbf24;
 
-  /* Sizing */
-  --sidebar-width: 380px;
-  --header-height: 70px;
+  /* Glow effects */
+  --glow-orange: 0 0 20px rgba(255, 107, 26, 0.15);
+  --glow-blue: 0 0 20px rgba(56, 189, 248, 0.12);
+  --glow-green: 0 0 12px rgba(52, 211, 153, 0.10);
+
+  /* Sizing — Compact */
+  --sidebar-width: 300px;
+  --header-height: 52px;
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Outfit', 'Inter', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
-  /* Depth */
-  --shadow-sm: 2px 2px 0px rgba(0,0,0,1);
-  --shadow-md: 4px 4px 0px rgba(0,0,0,1);
-  --shadow-lg: 8px 8px 0px rgba(0,0,0,1);
+  /* Depth — Subtle modern shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
 
   /* Transitions */
-  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
-  --transition-normal: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-fast: 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --transition-normal: 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-spring: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }

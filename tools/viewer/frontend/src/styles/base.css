@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════
-   Base — Reset, Typography, Scrollbar
+   Base — Reset, Typography, Scrollbar, Animations
+   Premium Dark v2 (fork-local)
    ═══════════════════════════════════════════ */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -8,33 +9,69 @@ html, body { height: 100%; overflow: hidden; }
 
 body {
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-primary);
+  background-image:
+    radial-gradient(ellipse at 10% 20%, rgba(255, 107, 26, 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 90% 80%, rgba(56, 189, 248, 0.02) 0%, transparent 50%);
   display: flex;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app { display: flex; width: 100%; height: 100%; }
 
-::selection { background: var(--accent-blue); color: #fff; }
+::selection { background: rgba(255, 107, 26, 0.3); color: #fff; }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* Sleek scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.15); }
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
 
 /* ── Animations ─────────────────────────── */
 @keyframes staggered-slide-in {
-  to { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
+
 @keyframes message-reveal {
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes pulse { 
+
+@keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50%      { opacity: 0.35; }
 }
+
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: var(--glow-orange); }
+  50%      { box-shadow: 0 0 30px rgba(255, 107, 26, 0.25); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

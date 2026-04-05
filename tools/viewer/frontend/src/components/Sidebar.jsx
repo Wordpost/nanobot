@@ -12,6 +12,27 @@ import { fetchSessions, getSessionsWatchUrl } from '../state/api.js'
 import { useSSE } from '../hooks/useSSE.js'
 import { useKeyboard } from '../hooks/useKeyboard.js'
 
+/** Inline SVG logo — Nanobot Forensic Viewer (fork-local) */
+function LogoIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="logo-icon" style="width:24px;height:24px;">
+      <defs>
+        <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#ff6b1a" />
+          <stop offset="100%" style="stop-color:#ff8a47" />
+        </linearGradient>
+      </defs>
+      <circle cx="12" cy="12" r="10" stroke="url(#logo-grad)" stroke-width="1.5" fill="none" opacity="0.3" />
+      <circle cx="12" cy="12" r="6" stroke="url(#logo-grad)" stroke-width="1.5" fill="none" opacity="0.6" />
+      <circle cx="12" cy="12" r="2.5" fill="url(#logo-grad)" />
+      <line x1="12" y1="2" x2="12" y2="6" stroke="url(#logo-grad)" stroke-width="1" opacity="0.4" />
+      <line x1="12" y1="18" x2="12" y2="22" stroke="url(#logo-grad)" stroke-width="1" opacity="0.4" />
+      <line x1="2" y1="12" x2="6" y2="12" stroke="url(#logo-grad)" stroke-width="1" opacity="0.4" />
+      <line x1="18" y1="12" x2="22" y2="12" stroke="url(#logo-grad)" stroke-width="1" opacity="0.4" />
+    </svg>
+  )
+}
+
 export function Sidebar() {
   const filtered = filteredSessions.value
   const allChannels = channels.value
@@ -46,7 +67,9 @@ export function Sidebar() {
   })
 
   // Determine SSE indicator style
-  const sseColor = status === 'connected' ? 'var(--accent-green)' : (status === 'error' ? 'var(--accent-red)' : 'var(--accent-amber)')
+  const sseColor = status === 'connected'
+    ? 'var(--accent-green)'
+    : (status === 'error' ? 'var(--accent-red)' : 'var(--accent-amber)')
   const sseAnim = status === 'connected' ? 'none' : 'pulse 1.5s infinite'
 
   return (
@@ -54,12 +77,15 @@ export function Sidebar() {
       {/* Header */}
       <div class="sidebar-header">
         <div class="logo">
-          <span class="logo-icon">🔬</span>
+          <LogoIcon />
           <span class="logo-text">Viewer</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:6px">
           <span class="session-count">{total}</span>
-          <span style={`width:8px;height:8px;border-radius:50%;background:${sseColor};animation:${sseAnim}`} title={`SSE: ${status}`} />
+          <span
+            style={`width:7px;height:7px;border-radius:50%;background:${sseColor};animation:${sseAnim};box-shadow:0 0 6px ${sseColor}`}
+            title={`SSE: ${status}`}
+          />
         </div>
       </div>
 
@@ -114,7 +140,7 @@ export function Sidebar() {
         {loading
           ? <div class="loading-state"><div class="spinner" /><span>Loading...</span></div>
           : filtered.length === 0
-            ? <div class="empty-state" style="padding:20px"><p>
+            ? <div class="empty-state" style="padding:16px"><p>
                 {searchQuery.value || activeChannel.value
                   ? `No matches for "${searchQuery.value || activeChannel.value}"`
                   : 'No sessions found'}
@@ -123,7 +149,7 @@ export function Sidebar() {
         }
       </div>
 
-      {/* Toolbar */}
+      {/* Toolbar — Compact single-row groups */}
       <div class="sidebar-toolbar">
         <div class="toolbar-group">
           <span class="toolbar-label">Panels</span>
@@ -132,18 +158,16 @@ export function Sidebar() {
               📋 Logs
             </button>
             <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'subagent' ? null : 'subagent'}>
-              🤖 Subagents
+              🤖 Sub
             </button>
             <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'memory' ? null : 'memory'}>
-              🧠 Memory
+              🧠 Mem
             </button>
-          </div>
-          <div class="toolbar-buttons">
             <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'deploy' ? null : 'deploy'}>
               🚀 Deploy
             </button>
             <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'config' ? null : 'config'}>
-              ⚙️ Config
+              ⚙️ Cfg
             </button>
           </div>
         </div>

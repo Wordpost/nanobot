@@ -1,4 +1,4 @@
-/** @module components/SessionItem — Single session row (fork-local) */
+/** @module components/SessionItem — Single session row — Compact (fork-local) */
 
 import { formatDate, formatSize } from '../utils/format.js'
 import { activeSession } from '../state/signals.js'
@@ -43,8 +43,8 @@ export function SessionItem({ session, index }) {
       <div class="session-meta">
         <span class="session-date">{formatDate(session.updated_at || session.created_at)}</span>
         <span class="session-size">{formatSize(session.size_bytes)}</span>
+        {session.agent && <span class="agent-badge">🤖 {session.agent}</span>}
       </div>
-      {session.agent && <span class="agent-badge">🤖 {session.agent}</span>}
     </div>
   )
 }
