@@ -1,4 +1,4 @@
-/** @module components/Sidebar — Session list + filters + toolbar (fork-local) */
+/** @module components/Sidebar — Session list + select filters + toolbar (fork-local) */
 
 import { useEffect } from 'preact/hooks'
 import { SessionItem } from './SessionItem.jsx'
@@ -15,7 +15,7 @@ import { useKeyboard } from '../hooks/useKeyboard.js'
 /** Inline SVG logo — Nanobot Forensic Viewer (fork-local) */
 function LogoIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="logo-icon" style="width:24px;height:24px;">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="logo-icon" style="width:28px;height:28px;">
       <defs>
         <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" style="stop-color:#ff6b1a" />
@@ -83,57 +83,55 @@ export function Sidebar() {
         <div style="display:flex;align-items:center;gap:6px">
           <span class="session-count">{total}</span>
           <span
-            style={`width:7px;height:7px;border-radius:50%;background:${sseColor};animation:${sseAnim};box-shadow:0 0 6px ${sseColor}`}
+            style={`width:8px;height:8px;border-radius:50%;background:${sseColor};animation:${sseAnim};box-shadow:0 0 6px ${sseColor}`}
             title={`SSE: ${status}`}
           />
         </div>
       </div>
 
-      {/* Search */}
-      <div class="search-box">
-        <span class="search-icon">🔍</span>
-        <input
-          type="text"
-          placeholder="Search sessions..."
-          value={searchQuery.value}
-          onInput={e => searchQuery.value = e.target.value}
-          id="search-input"
-        />
+      {/* Search + Filters row */}
+      <div class="sidebar-filters">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            placeholder="Search sessions..."
+            value={searchQuery.value}
+            onInput={e => searchQuery.value = e.target.value}
+            id="search-input"
+          />
+        </div>
+
+        <div class="filter-selects">
+          {/* Channel select */}
+          {allChannels.length > 0 && (
+            <select
+              class="filter-select"
+              value={activeChannel.value || ''}
+              onChange={e => activeChannel.value = e.target.value || null}
+            >
+              <option value="">All channels</option>
+              {allChannels.map(ch => (
+                <option key={ch} value={ch}>{ch}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Agent select (pool mode) */}
+          {isPool && allAgents.length > 0 && (
+            <select
+              class="filter-select"
+              value={activeAgent.value || ''}
+              onChange={e => activeAgent.value = e.target.value || null}
+            >
+              <option value="">All agents</option>
+              {allAgents.map(ag => (
+                <option key={ag} value={ag}>{ag}</option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
-
-      {/* Channel filters */}
-      {allChannels.length > 0 && (
-        <div class="channel-filters">
-          <span
-            class={`channel-chip ${!activeChannel.value ? 'active' : ''}`}
-            onClick={() => activeChannel.value = null}
-          >All</span>
-          {allChannels.map(ch => (
-            <span
-              key={ch}
-              class={`channel-chip ${activeChannel.value === ch ? 'active' : ''}`}
-              onClick={() => activeChannel.value = activeChannel.value === ch ? null : ch}
-            >{ch}</span>
-          ))}
-        </div>
-      )}
-
-      {/* Agent filter (pool mode) */}
-      {isPool && allAgents.length > 0 && (
-        <div class="channel-filters">
-          <span
-            class={`channel-chip ${!activeAgent.value ? 'active' : ''}`}
-            onClick={() => activeAgent.value = null}
-          >All agents</span>
-          {allAgents.map(ag => (
-            <span
-              key={ag}
-              class={`channel-chip ${activeAgent.value === ag ? 'active' : ''}`}
-              onClick={() => activeAgent.value = activeAgent.value === ag ? null : ag}
-            >{ag}</span>
-          ))}
-        </div>
-      )}
 
       {/* Session list */}
       <div class="session-list">
@@ -149,25 +147,40 @@ export function Sidebar() {
         }
       </div>
 
-      {/* Toolbar — Compact single-row groups */}
+      {/* Toolbar — flex-wrap для автоматического переноса */}
       <div class="sidebar-toolbar">
         <div class="toolbar-group">
           <span class="toolbar-label">Panels</span>
           <div class="toolbar-buttons">
-            <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'logs' ? null : 'logs'}>
+            <button
+              class={`toolbar-btn ${activePanel.value === 'logs' ? 'active' : ''}`}
+              onClick={() => activePanel.value = activePanel.value === 'logs' ? null : 'logs'}
+            >
               📋 Logs
             </button>
-            <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'subagent' ? null : 'subagent'}>
-              🤖 Sub
+            <button
+              class={`toolbar-btn ${activePanel.value === 'subagent' ? 'active' : ''}`}
+              onClick={() => activePanel.value = activePanel.value === 'subagent' ? null : 'subagent'}
+            >
+              🤖 Subagents
             </button>
-            <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'memory' ? null : 'memory'}>
-              🧠 Mem
+            <button
+              class={`toolbar-btn ${activePanel.value === 'memory' ? 'active' : ''}`}
+              onClick={() => activePanel.value = activePanel.value === 'memory' ? null : 'memory'}
+            >
+              🧠 Memory
             </button>
-            <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'deploy' ? null : 'deploy'}>
+            <button
+              class={`toolbar-btn ${activePanel.value === 'deploy' ? 'active' : ''}`}
+              onClick={() => activePanel.value = activePanel.value === 'deploy' ? null : 'deploy'}
+            >
               🚀 Deploy
             </button>
-            <button class="toolbar-btn" onClick={() => activePanel.value = activePanel.value === 'config' ? null : 'config'}>
-              ⚙️ Cfg
+            <button
+              class={`toolbar-btn ${activePanel.value === 'config' ? 'active' : ''}`}
+              onClick={() => activePanel.value = activePanel.value === 'config' ? null : 'config'}
+            >
+              ⚙️ Config
             </button>
           </div>
         </div>

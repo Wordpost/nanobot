@@ -94,7 +94,7 @@ export function ChatView() {
             <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
               <div style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${offsetY}px)` }}>
                 {virtualItems.map(({ item, index, measureRef }) => (
-                  <div key={index} ref={measureRef}>
+                  <div key={index} ref={measureRef} style={{ display: 'flex', flexDirection: 'column' }}>
                     <Message msg={item} index={index} onRefresh={loadSession} />
                   </div>
                 ))}

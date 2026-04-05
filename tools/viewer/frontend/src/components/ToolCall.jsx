@@ -6,7 +6,17 @@ export function ToolCall({ call }) {
   const [open, setOpen] = useState(false)
   const name = call.name || call.function?.name || 'unknown'
   const args = call.input || call.function?.arguments || call.args || ''
-  const argsStr = typeof args === 'string' ? args : JSON.stringify(args, null, 2)
+  
+  let argsStr = '';
+  if (typeof args === 'string') {
+    try {
+      argsStr = JSON.stringify(JSON.parse(args), null, 2);
+    } catch(e) {
+      argsStr = args;
+    }
+  } else {
+    argsStr = JSON.stringify(args, null, 2);
+  }
 
   return (
     <div class="tool-call">
