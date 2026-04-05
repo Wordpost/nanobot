@@ -9,23 +9,20 @@ from fastapi.responses import FileResponse
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from .config import PORT, HOST, SESSIONS_DIR, CONTAINER_NAME, STATIC_DIR, POOL_MODE, WORKSPACES, print_banner
+from .config import PORT, HOST, SESSIONS_DIR, CONTAINER_NAME, POOL_MODE, WORKSPACES, print_banner
 from .routes import sessions, logs, system, config_manager, subagents, memory
 from .schemas import AppConfig, AgentInfo
 
 app = FastAPI(title="Nanobot Forensic Viewer", version="3.0.0")
 
-# Static files: prefer Vite build (static_dist/), fallback to legacy (static/) (fork-local)
+# Static files: React/Vite SPA build (static_dist/)
 _VIEWER_ROOT = Path(__file__).resolve().parent.parent
 _DIST_DIR = _VIEWER_ROOT / "static_dist"
-_SERVE_DIR = _DIST_DIR if _DIST_DIR.exists() else STATIC_DIR
 
-# Legacy static always mounted for backward compat
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+if not _DIST_DIR.exists() or not (_DIST_DIR / "index.html").exists():
+    raise RuntimeError(f"Vite build not found at {_DIST_DIR}. Please run 'npm run build' in the frontend directory.")
 
-# Vite build assets (if using static_dist)
-if _DIST_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=_DIST_DIR / "assets"), name="assets")
+app.mount("/assets", StaticFiles(directory=_DIST_DIR / "assets"), name="assets")
 
 # Routes
 app.include_router(sessions.router)
@@ -38,8 +35,8 @@ app.include_router(memory.router)
 
 @app.get("/")
 async def get_index():
-    """Serve the SPA entry point — Vite build or legacy. (fork-local)"""
-    return FileResponse(_SERVE_DIR / "index.html")
+    """Serve the SPA entry point. (fork-local)"""
+    return FileResponse(_DIST_DIR / "index.html")
 
 
 @app.get("/api/config", response_model=AppConfig)

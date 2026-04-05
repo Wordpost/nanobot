@@ -1,98 +1,82 @@
-# Nanobot Session Viewer 🧬 (Forensic Edition)
+# Nanobot Forensic Viewer (Vivir)
+> Web-интерфейс для анализа логов сессий и памяти агентов Nanobot.
 
-> **High-speed diagnostic interface for monitoring and debugging Nanobot agent sessions.**
+Forensic Viewer (Vivir) — это специализированная админка для просмотра, фильтрации и анализа логов работы мультиагентной системы. В версии 3.0.0 мы полностью перешли на стек FastAPI (Backend) и React/Preact + Vite (Frontend).
 
----
+## Быстрый старт
 
-## 🔍 Overview
+### Локальный запуск (Разработка)
 
-**Session Viewer** — специализированная панель для анализа логов и сессий автономных агентов Nanobot.
+Просто запусти скрипт. Он автоматически проверит зависимости, выполнит `npm run build` для фронтенда и поднимет FastAPI бэкенд на порту 2003.
 
-Интерфейс выполнен в эстетике **Forensic Orange**: высокая контрастность, моноширинные шрифты, чёткое разделение между системными процессами и ответами агента.
-
-**Viewer полностью портабелен** — можно разместить в любой директории, и он автоматически найдёт папку `.nanobot/workspace/sessions`, поднимаясь по дереву каталогов.
-
----
-
-## ✨ Features
-
-- 🧠 **Thought Transparency** — интерактивные блоки для reasoning и tool_calls
-- ⚡ **Turbo Streaming Parser** — обработка JSONL файлов 500MB+ без зависаний
-- 🩺 **Docker Logs** — стриминг логов контейнера в реальном времени
-- 📍 **Auto-detect** — автоматический поиск `.nanobot` папки (работает из любого расположения)
-
----
-
-## 🚀 Quick Start
-
-### 1. Setup
 ```bash
-cd tools/viewer
-python3 -m venv venv
-source venv/bin/activate      # Linux/macOS
-# или: venv\Scripts\activate  # Windows
-pip install -r requirements.txt
-
-"C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe" -m uvicorn src.app:app --host 0.0.0.0 --port 2004 --reload
-
+# Из корня папки viewer
+./run.sh    # Для Linux/macOS
+run.bat     # Для Windows
 ```
+Открой браузер на `http://localhost:2003`.
 
-### 2. Launch
+### Запуск в режиме разработки (HMR) 
+
+Если ты активно меняешь UI на **Windows**, у нас есть единый скрипт для запуска:
+
 ```bash
-./run.sh      # Linux/macOS
-# или
-run.bat       # Windows
+# Поднимет два окна терминала (Бэкенд 2003 и Vite-сервер 5173)
+dev.bat
 ```
+В режиме разработки открывай в браузере **`http://localhost:5173`**. Сервер Vite автоматически проксирует `/api` запросы (HMR-режим) на бэкенд.
 
-Откройте [http://127.0.0.1:2003](http://127.0.0.1:2003) в браузере.
+Для ручного запуска (Linux/macOS):
+1. Бэкенд: `python -m src.app`
+2. Фронтенд (в новом терминале): `cd frontend && npm run dev`
 
 ---
 
-## ⚙️ Configuration
+## Запуск на сервере (VPS) с SSH-туннелем
 
-Viewer подхватывает конфигурацию в следующем приоритете:
+Для безопасного использования Vivir на публичном сервере **без открытия портов наружу**, бэкенд по умолчанию слушает только `127.0.0.1`.
 
-1. **`.env` файл** в папке viewer (скопируйте из `.env.example`)
-2. **Переменные окружения**
-3. **Автодетект** — viewer поднимается по дереву каталогов и ищет `.nanobot/workspace/sessions`
+1. **На сервере** просто запусти скрипт. Он автоматически проверит наличие `node_modules`, соберет свежий фронтенд и запустит бэкенд (Vivir не использует Docker, запускается напрямую через Python):
+   ```bash
+   ./run.sh
+
+   ```
+2. **На локальной Windows машине** (в Git Bash или PowerShell):
+   ```bash
+   ssh -L 2003:127.0.0.1:2003 user@vps_ip -N
+   ```
+3. Открой в локальном браузере `http://localhost:2003`. 
+   *(Почему в браузере, если это FastAPI? Потому что порт 2003 выступает единой точкой входа: бэкенд сам раздает собранное SPA-приложение (HTML/JS) при переходе в корень, и обрабатывает API-запросы по маршрутам `/api`).* 
+   Твой трафик пойдет по зашифрованному SSH-туннелю к `Vivir` админке.
+
+---
+
+## Возможности
+
+- 🕵️‍♀️ Просмотр логов в реальном времени.
+- 🌳 Анализ "дерева мыслей" (Chain of Thought).
+- 🧠 Просмотр памяти (векторной и долговременной).
+- 🐙 Режим `Pool Mode` — централизованный доступ к логам нескольких агентов одновременно из одной точки (Multi-agent architecture).
+
+---
+
+## Конфигурация
+
+Конфигурация считывается из файла `.env` (в корне `viewer`) или из переменных окружения операционной системы.
 
 | Variable | Description | Default |
-| :--- | :--- | :--- |
-| `NANOBOT_SESSIONS_DIR` | Абсолютный путь к сессиям | *auto-detect* |
-| `NANOBOT_PORT` | Порт сервера | `2003` |
-| `NANOBOT_HOST` | Хост сервера | `127.0.0.1` |
-| `NANOBOT_CONTAINER` | Docker контейнер для логов | `nanobot-gateway` |
+|----------|-------------|---------|
+| `NANOBOT_PORT` | Серверный порт FastAPI | `2003` |
+| `NANOBOT_HOST` | Хост FastAPI | `127.0.0.1` |
+| `NANOBOT_CONTAINER` | Имя контейнера по умолчанию *(только для Single Mode)* | `nanobot-gateway` |
+| `NANOBOT_SESSIONS_DIR` | Путь до папки сессий `workspace/sessions/` *(Single Mode)* | Auto-detect |
+| `NANOBOT_POOL_DIR` | Корневая директория кластера рабочих пространств *(Включает Pool Mode)* | *Empty* |
 
-### Пример `.env` для VPS
-```env
-NANOBOT_SESSIONS_DIR=/opt/nanobot/.nanobot/workspace/sessions
-NANOBOT_HOST=0.0.0.0
-```
+## Документация
 
----
-
-## 📂 Deployment Layout
-
-```text
-/opt/nanobot/                        ← deployment root
-├── docker-compose.yml               ← compose (поднимает бота)
-├── .env                             ← API keys, tokens
-├── .nanobot/                        ← bot workspace (volume)
-│   └── workspace/sessions/          ← ← ← viewer читает отсюда
-└── nanobot/                         ← git clone форка
-    ├── Dockerfile
-    ├── nanobot/
-    ├── tools/
-    │   └── viewer/                  ← Session Viewer
-    └── ...
-```
+- [Architecture & Data Flow](./docs/architecture.md)
 
 ---
 
-## 🎨 Aesthetics
-- **Accent Color**: `#FF5C00` (Signal Orange)
-- **Typography**: Inter (UI), JetBrains Mono (Code/Logs)
-- **Borders**: Sharp 1px (Solid Forensic style)
-
----
-*Created with 🧡 for the Nanobot Ecosystem.*
+## Лицензия
+См. LICENSE в корне проекта.

@@ -162,7 +162,7 @@ elif not POOL_MODE and SESSIONS_DIR.exists():
     # /opt/nanobot/.nanobot/workspace/sessions → /opt/nanobot
     DEPLOY_ROOT = SESSIONS_DIR.parent.parent.parent
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
 
 # Default workspace for single mode — unified interface (fork-local)
 DEFAULT_WORKSPACE: Optional[WorkspaceInfo] = None

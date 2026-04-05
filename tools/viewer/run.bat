@@ -13,6 +13,17 @@ if not exist "venv\Scripts\activate.bat" (
     exit /b 1
 )
 
+if exist "frontend" (
+    where npm >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo [Info] Checking frontend dependencies and building Static SPA...
+        pushd frontend
+        if not exist "node_modules" call npm install
+        call npm run build
+        popd
+    )
+)
+
 call venv\Scripts\activate.bat
 python -m src.app
 popd
