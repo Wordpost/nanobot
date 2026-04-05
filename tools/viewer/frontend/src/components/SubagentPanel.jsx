@@ -1,0 +1,143 @@
+/** @module components/SubagentPanel — Bottom panel for subagent logs (fork-local) */
+
+import { useState, useEffect } from 'preact/hooks'
+import { activePanel, panelExpanded, poolMode, subagentsList, activeSubagent, subagentDetail } from '../state/signals.js'
+import { fetchSubagents, fetchSubagentDetail, getSubagentsWatchUrl } from '../state/api.js'
+import { useSSE } from '../hooks/useSSE.js'
+import { AgentSelector } from './AgentSelector.jsx'
+import { Markdown } from './Markdown.jsx'
+import { showToast } from './Toast.jsx'
+
+export function SubagentPanel() {
+  const [agent, setAgent] = useState(null)
+  const expanded = panelExpanded.value
+  const list = subagentsList.value
+  const selected = activeSubagent.value
+  const detail = subagentDetail.value
+
+  // Initial fetch
+  useEffect(() => {
+    fetchSubagents(agent).then(data => {
+      subagentsList.value = data.subagents || []
+    }).catch(() => {})
+  }, [agent])
+
+  // SSE watcher
+  useSSE(getSubagentsWatchUrl(agent), {
+    onMessage: (data) => {
+      if (data.subagents) subagentsList.value = data.subagents
+    },
+  })
+
+  // Load detail when selected
+  useEffect(() => {
+    if (!selected) { subagentDetail.value = null; return }
+    fetchSubagentDetail(selected).then(d => {
+      subagentDetail.value = d
+    }).catch(e => showToast(e.message, 'error'))
+  }, [selected])
+
+  return (
+    <div class={`bottom-panel subagent-panel-theme ${expanded ? 'expanded' : ''}`}>
+      <div class="logs-header">
+        <div style="display:flex;align-items:center;gap:8px">
+          {poolMode.value && <AgentSelector value={agent} onChange={setAgent} />}
+          <h3>🤖 Subagents</h3>
+          <span class="session-count">{list.length}</span>
+        </div>
+        <div class="logs-actions">
+          <button class="btn-close-panel panel-expand-btn" onClick={() => panelExpanded.value = !expanded}>⤢</button>
+          <button class="btn-close-panel" onClick={() => activePanel.value = null}>✕</button>
+        </div>
+      </div>
+      <div class="subagent-panel-layout">
+        <div class="subagent-panel-sidebar">
+          <div class="subagent-list">
+            {list.map(s => (
+              <div
+                key={s.filename}
+                class={`subagent-list-item ${selected === s.filename ? 'active' : ''}`}
+                onClick={() => activeSubagent.value = s.filename}
+              >
+                <div class="subagent-item-header">
+                  <span class="subagent-list-label">{s.label || s.filename}</span>
+                  <span class={`subagent-status ${s.status || 'running'}`}>
+                    {s.status === 'ok' ? '✓' : s.status === 'error' ? '✕' : '⟳'}
+                  </span>
+                </div>
+                <div class="subagent-item-footer">
+                  <span class="subagent-list-id">{s.filename}</span>
+                  <div class="subagent-meta-block">
+                    {s.duration_ms && <span class="subagent-duration">{(s.duration_ms/1000).toFixed(1)}s</span>}
+                    {s.iterations && <span>{s.iterations} iter</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {list.length === 0 && <div class="subagent-panel-empty">No subagent logs found</div>}
+          </div>
+        </div>
+        <div class="subagent-panel-detail">
+          {!detail
+            ? <div class="subagent-panel-empty">Select a subagent to view details</div>
+            : (
+              <div>
+                <h3 style="color:var(--accent-orange);margin-bottom:12px">{detail.label || detail.filename}</h3>
+                {detail.task && <div class="subagent-task-desc">{detail.task}</div>}
+                {detail.iterations?.map((iter, i) => (
+                  <SubagentIteration key={i} iter={iter} index={i} />
+                ))}
+                {detail.final_result && (
+                  <div>
+                    <div class="subagent-result-toolbar"><span>FINAL RESULT</span></div>
+                    <div class={`subagent-result-container ${detail.status || ''}`}>
+                      <div class="subagent-final-result"><Markdown text={detail.final_result} /></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          }
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SubagentIteration({ iter, index }) {
+  const [open, setOpen] = useState(index === 0)
+  return (
+    <div class="subagent-iteration">
+      <div class="subagent-iter-header" onClick={() => setOpen(!open)}>
+        <span class={`chevron ${open ? 'open' : ''}`}>▶</span>
+        <span>Iteration {index + 1}</span>
+      </div>
+      {open && (
+        <div class="subagent-iter-body">
+          {iter.model_response && <div class="subagent-model-resp">{iter.model_response}</div>}
+          {iter.tool_calls?.map((tc, i) => (
+            <SubagentToolCall key={i} tc={tc} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SubagentToolCall({ tc }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div class="subagent-tc">
+      <div class="subagent-tc-name" onClick={() => setOpen(!open)}>
+        <span class={`chevron ${open ? 'open' : ''}`}>▶</span>
+        🔧 {tc.name || tc.function?.name || 'tool'}
+      </div>
+      {open && (
+        <div class="subagent-tc-detail">
+          {tc.input && <><div class="subagent-tc-label">Input</div><pre>{typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input, null, 2)}</pre></>}
+          {tc.output && <><div class="subagent-tc-label">Output</div><pre>{typeof tc.output === 'string' ? tc.output : JSON.stringify(tc.output, null, 2)}</pre></>}
+        </div>
+      )}
+    </div>
+  )
+}

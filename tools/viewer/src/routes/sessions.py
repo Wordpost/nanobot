@@ -2,13 +2,14 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from ..config import SESSIONS_DIR, POOL_MODE, WORKSPACES
 from ..parser import SessionParser
 from ..schemas import SessionListResponse, SessionDetail, SessionMetadata
+from ..utils import sse_response
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 logger = logging.getLogger("session-viewer")
@@ -90,67 +91,33 @@ async def list_sessions():
 @router.get("/watch")
 async def watch_sessions():
     """SSE endpoint — emits full session list whenever directory contents change."""
+    from ..utils import watch_directories
 
     async def generate():
-        last_fingerprint = None
-        keepalive_counter = 0
+        dirs_to_scan = (
+            [ws.sessions_dir for name, ws in WORKSPACES.items()]
+            if POOL_MODE
+            else [SESSIONS_DIR]
+        )
 
-        while True:
-            try:
-                fingerprint = {}
-                dirs_to_scan = (
-                    [(ws.sessions_dir, name) for name, ws in WORKSPACES.items()]
-                    if POOL_MODE
-                    else [(SESSIONS_DIR, None)]
-                )
+        async for changed in watch_directories(dirs_to_scan, ".jsonl"):
+            if changed:
+                sessions = _build_session_list()
+                payload = json.dumps({"sessions": sessions, "total": len(sessions)})
+                yield f"data: {payload}\n\n"
+            else:
+                yield ": keepalive\n\n"
 
-                for scan_dir, agent_name in dirs_to_scan:
-                    if not scan_dir.exists():
-                        continue
-                    for f in scan_dir.glob("*.jsonl"):
-                        try:
-                            st = f.stat()
-                            key = f"{agent_name}/{f.name}" if agent_name else f.name
-                            fingerprint[key] = (st.st_mtime, st.st_size)
-                        except OSError:
-                            continue
-
-                fp_key = str(sorted(fingerprint.items()))
-
-                if fp_key != last_fingerprint:
-                    last_fingerprint = fp_key
-                    sessions = _build_session_list()
-                    payload = json.dumps(
-                        {"sessions": sessions, "total": len(sessions)}
-                    )
-                    yield f"data: {payload}\n\n"
-                    keepalive_counter = 0
-                else:
-                    keepalive_counter += 1
-                    if keepalive_counter >= 5:
-                        yield ": keepalive\n\n"
-                        keepalive_counter = 0
-
-                await asyncio.sleep(3)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                await asyncio.sleep(5)
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return sse_response(generate)
 
 
-@router.get("/{filename:path}", response_model=SessionDetail)
-async def get_session_detail(filename: str):
-    """Get full message history for a single session."""
+@router.get("/{filename:path}")
+async def get_session_detail(
+    filename: str,
+    page: Optional[int] = Query(None, ge=1, description="Page number (1-based)"),
+    limit: Optional[int] = Query(None, ge=1, le=500, description="Messages per page"),
+):
+    """Get message history for a session. Supports optional pagination. (fork-local)"""
     _validate_filename(filename)
 
     filepath, _ = _resolve_filepath(filename)
@@ -158,7 +125,19 @@ async def get_session_detail(filename: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     parser = SessionParser(filepath)
-    return parser.load_full()
+    result = parser.load_full()
+
+    # Pagination: if page & limit provided, return a slice
+    if page is not None and limit is not None:
+        total = len(result["messages"])
+        offset = (page - 1) * limit
+        result["messages"] = result["messages"][offset:offset + limit]
+        result["total"] = total
+        result["page"] = page
+        result["limit"] = limit
+        result["pages"] = (total + limit - 1) // limit
+
+    return result
 
 
 # ── DELETE endpoints ────────────────────────────────────────

@@ -1,0 +1,59 @@
+/* ═══════════════════════════════════════════
+   Nanobot Session Viewer — Design Tokens
+   Forensic Orange design system
+   ═══════════════════════════════════════════ */
+
+:root {
+  /* Base palette: Deep Anthracite & Pure Black */
+  --bg-primary: #050505;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #111111;
+  --bg-hover: #1a1a1a;
+  --bg-active: #222222;
+
+  /* Borders */
+  --border-default: #222222;
+  --border-muted: #111111;
+  --border-accent: #ff5c00;
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --text-muted: #444444;
+  --text-link: #ff5c00;
+
+  /* Role colors */
+  --role-user: #00ff7f;
+  --role-user-bg: rgba(0, 255, 127, 0.05);
+  --role-assistant: #00d4ff;
+  --role-assistant-bg: rgba(0, 212, 255, 0.05);
+  --role-tool: #f0f0f0;
+  --role-tool-bg: rgba(240, 240, 240, 0.03);
+  --role-system: #ff5c00;
+
+  /* Accent */
+  --accent-orange: #ff5c00;
+  --accent-blue: #00d4ff;
+  --accent-green: #00ff7f;
+  --accent-red: #ff3c3c;
+
+  /* Sizing */
+  --sidebar-width: 380px;
+  --header-height: 70px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Depth */
+  --shadow-sm: 2px 2px 0px rgba(0,0,0,1);
+  --shadow-md: 4px 4px 0px rgba(0,0,0,1);
+  --shadow-lg: 8px 8px 0px rgba(0,0,0,1);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}

@@ -8,6 +8,8 @@ from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from ..utils import sse_response as _sse_response, sse_line as _sse_line
+
 from ..config import CONTAINER_NAME, DEPLOY_ROOT, POOL_MODE, WORKSPACES, resolve_workspace
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -16,29 +18,13 @@ logger = logging.getLogger("session-viewer.system")
 _deploy_lock = asyncio.Lock()
 
 
-def _sse_response(generator):
-    """Wrap SSE generator in StreamingResponse with correct headers."""
-    return StreamingResponse(
-        generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-def _sse_line(payload: dict) -> str:
-    """Format a single SSE data line."""
-    return f"data: {json.dumps(payload)}\n\n"
-
-
 def _sse_keepalive() -> str:
     return ": keepalive\n\n"
 
 
 async def _run_streamed_command(cmd: str, cwd: str) -> AsyncGenerator[str, None]:
+    import subprocess
+    import threading
     """Execute a shell command and yield SSE lines."""
     logger.info(f"Executing from {cwd}: {cmd}")
     yield _sse_line({"line": f"> Working directory: {cwd}"})
@@ -46,24 +32,42 @@ async def _run_streamed_command(cmd: str, cwd: str) -> AsyncGenerator[str, None]
 
     process = None
     try:
-        process = await asyncio.create_subprocess_shell(
+        process = subprocess.Popen(
             cmd,
             cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
+
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue()
+
+        def reader():
+            try:
+                for line in iter(process.stdout.readline, b""):
+                    asyncio.run_coroutine_threadsafe(queue.put(line), loop)
+            except Exception:
+                pass
+            finally:
+                asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
 
         while True:
             try:
-                line = await asyncio.wait_for(process.stdout.readline(), timeout=15)
-                if not line:
+                line = await asyncio.wait_for(queue.get(), timeout=15)
+                if line is None:
                     break
                 text = line.decode("utf-8", errors="replace").rstrip("\n\r")
                 yield _sse_line({"line": text})
             except asyncio.TimeoutError:
                 yield _sse_keepalive()
 
-        await process.wait()
+        # thread will finish because stdout is closed or EOF
+        # wait for process to cleanly exit
+        await asyncio.to_thread(process.wait)
 
         if process.returncode == 0:
             yield _sse_line({"line": "[SUCCESS] Completed successfully!", "done": True})
@@ -74,10 +78,14 @@ async def _run_streamed_command(cmd: str, cwd: str) -> AsyncGenerator[str, None]
         yield _sse_line({"line": "[WARNING] Request cancelled.", "error": True})
     except Exception as e:
         logger.error(f"Command error: {e}")
-        yield _sse_line({"line": f"[system-error] {e}", "error": True, "done": True})
+        yield _sse_line({"line": f"[system-error] {type(e).__name__}: {str(e)}", "error": True, "done": True})
     finally:
         if process and process.returncode is None:
-            pass
+            try:
+                process.kill()
+                process.wait()
+            except Exception:
+                pass
 
 
 @router.get("/deploy/stream")
@@ -143,3 +151,40 @@ async def stream_restart(agent: Optional[str] = Query(None)):
                 yield chunk
 
     return _sse_response(generate)
+
+
+@router.post("/restart")
+async def trigger_restart(agent: Optional[str] = Query(None)):
+    """Trigger a container restart and return immediately on success."""
+    if _deploy_lock.locked():
+        raise HTTPException(status_code=429, detail="A task is already in progress.")
+
+    if not DEPLOY_ROOT:
+        raise HTTPException(status_code=500, detail="Deploy root not configured")
+
+    if POOL_MODE:
+        if not agent:
+            raise HTTPException(status_code=400, detail="Agent parameter required in pool mode")
+        ws = resolve_workspace(agent)
+        container = ws.container_name
+    else:
+        container = CONTAINER_NAME
+
+    async with _deploy_lock:
+        root = str(DEPLOY_ROOT)
+        cmd = f"docker compose restart {container}"
+        logger.info(f"Triggering quick restart: {cmd}")
+        
+        import subprocess
+        process = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            shell=True,
+            cwd=root,
+            capture_output=True
+        )
+        
+        if process.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Restart failed: {process.stdout.decode()} {process.stderr.decode()}")
+            
+    return {"status": "success", "message": f"Container {container} restarted"}

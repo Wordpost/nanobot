@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from ..config import SUBAGENTS_DIR, POOL_MODE, WORKSPACES, resolve_workspace
+from ..utils import sse_response
 from ..schemas import (
     SubagentDetail,
     SubagentIteration,
@@ -138,6 +139,7 @@ async def list_subagents(agent: Optional[str] = Query(None)):
 @router.get("/watch")
 async def watch_subagents(agent: Optional[str] = Query(None)):
     """SSE endpoint — emits subagent list on directory changes."""
+    from ..utils import watch_directories
 
     if agent and POOL_MODE:
         ws = resolve_workspace(agent)
@@ -146,65 +148,29 @@ async def watch_subagents(agent: Optional[str] = Query(None)):
         scan_dirs = _get_scan_dirs()
 
     async def generate():
-        last_fingerprint = None
-        keepalive_counter = 0
+        dirs_to_scan = [d for d, _ in scan_dirs]
 
-        while True:
-            try:
-                fingerprint = {}
+        async for changed in watch_directories(dirs_to_scan, ".json"):
+            if changed:
+                subagents = []
                 for scan_dir, agent_name in scan_dirs:
                     if not scan_dir.exists():
                         continue
-                    for f in scan_dir.glob("*.json"):
-                        try:
-                            st = f.stat()
-                            key = f"{agent_name}/{f.name}" if agent_name else f.name
-                            fingerprint[key] = (st.st_mtime, st.st_size)
-                        except OSError:
-                            continue
+                    for filepath in sorted(
+                        scan_dir.glob("*.json"),
+                        key=lambda p: p.stat().st_mtime,
+                        reverse=True,
+                    ):
+                        s = _build_summary(filepath, agent_name)
+                        if s:
+                            subagents.append(s.model_dump())
 
-                fp_key = str(sorted(fingerprint.items()))
+                payload = json.dumps({"subagents": subagents, "total": len(subagents)})
+                yield f"data: {payload}\n\n"
+            else:
+                yield ": keepalive\n\n"
 
-                if fp_key != last_fingerprint:
-                    last_fingerprint = fp_key
-
-                    subagents = []
-                    for scan_dir, agent_name in scan_dirs:
-                        if not scan_dir.exists():
-                            continue
-                        for filepath in sorted(
-                            scan_dir.glob("*.json"),
-                            key=lambda p: p.stat().st_mtime,
-                            reverse=True,
-                        ):
-                            s = _build_summary(filepath, agent_name)
-                            if s:
-                                subagents.append(s.model_dump())
-
-                    payload = json.dumps({"subagents": subagents, "total": len(subagents)})
-                    yield f"data: {payload}\n\n"
-                    keepalive_counter = 0
-                else:
-                    keepalive_counter += 1
-                    if keepalive_counter >= 5:
-                        yield ": keepalive\n\n"
-                        keepalive_counter = 0
-
-                await asyncio.sleep(3)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                await asyncio.sleep(5)
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return sse_response(generate)
 
 
 @router.get("/{filename:path}", response_model=SubagentDetail)

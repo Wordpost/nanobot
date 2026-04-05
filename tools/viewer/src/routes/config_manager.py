@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -22,10 +21,8 @@ def _get_config_path(agent: Optional[str] = None):
 @router.get("/")
 async def get_full_config(agent: Optional[str] = Query(None)):
     """Returns the full nanobot configuration as JSON."""
-    if not agent and resolve_workspace.__module__.endswith(".config") and any(os.getenv("NANOBOT_POOL_DIR", "").strip() for _ in [1]):
-        from ..config import POOL_MODE
-        if POOL_MODE:
-             return {"message": "Please select a specific agent to view its config.json."}
+    if not agent and POOL_MODE:  # (fork-local) simplified pool mode check
+        return {"message": "Please select a specific agent to view its config.json."}
 
     try:
         path = _get_config_path(agent)
@@ -48,10 +45,8 @@ async def get_full_config(agent: Optional[str] = Query(None)):
 @router.post("/")
 async def save_full_config(request: Request, agent: Optional[str] = Query(None)):
     """Saves the provided JSON document back to config.json."""
-    if not agent and resolve_workspace.__module__.endswith(".config") and any(os.getenv("NANOBOT_POOL_DIR", "").strip() for _ in [1]):
-        from ..config import POOL_MODE
-        if POOL_MODE:
-             raise HTTPException(status_code=400, detail="Cannot save config for 'All Agents'. Please select a specific agent.")
+    if not agent and POOL_MODE:  # (fork-local) simplified pool mode check
+        raise HTTPException(status_code=400, detail="Cannot save config for 'All Agents'. Please select a specific agent.")
 
     try:
         data = await request.json()

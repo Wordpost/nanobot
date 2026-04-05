@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..config import resolve_workspace
+from ..config import POOL_MODE, resolve_workspace
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 logger = logging.getLogger("session-viewer")
@@ -65,10 +65,8 @@ async def get_memory_file(file_type: str, agent: Optional[str] = Query(None)):
 @router.delete("/{file_type}")
 async def clear_memory_file(file_type: str, agent: Optional[str] = Query(None)):
     """Clear file contents without deleting the file."""
-    if not agent and resolve_workspace.__module__.endswith(".config") and any(os.getenv("NANOBOT_POOL_DIR", "").strip() for _ in [1]):
-        from ..config import POOL_MODE
-        if POOL_MODE:
-            raise HTTPException(status_code=400, detail="Cannot clear memory for 'All Agents'. Please select a specific agent.")
+    if not agent and POOL_MODE:  # (fork-local) simplified pool mode check
+        raise HTTPException(status_code=400, detail="Cannot clear memory for 'All Agents'. Please select a specific agent.")
 
     try:
         filepath = _resolve_path(file_type, agent)

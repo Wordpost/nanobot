@@ -32,6 +32,9 @@ python3 -m venv venv
 source venv/bin/activate      # Linux/macOS
 # или: venv\Scripts\activate  # Windows
 pip install -r requirements.txt
+
+"C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe" -m uvicorn src.app:app --host 0.0.0.0 --port 2004 --reload
+
 ```
 
 ### 2. Launch
