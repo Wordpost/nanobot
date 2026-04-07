@@ -31,6 +31,7 @@ import aiohttp
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
+from nanobot.utils.path import abbreviate_path
 
 
 class HandoffTool(Tool):
@@ -204,16 +205,16 @@ class HandoffTool(Tool):
                         )
                     body_text = await resp.text()
                     logger.error(
-                        "Handoff to '{}' failed: HTTP {} — {}",
-                        target, resp.status, body_text[:200],
+                        "Handoff to '{}' ({}) failed: HTTP {} — {}",
+                        target, abbreviate_path(url, 50), resp.status, body_text[:200],
                     )
                     return f"Error: Handoff to '{target}' failed (HTTP {resp.status})"
 
         except aiohttp.ClientError as exc:
-            logger.error("Handoff connection error to '{}': {}", target, exc)
+            logger.error("Handoff connection error to '{}' ({}): {}", target, abbreviate_path(url, 50), exc)
             return f"Error: Could not connect to '{target}' — {exc}"
         except Exception as exc:
-            logger.error("Handoff unexpected error to '{}': {}", target, exc)
+            logger.error("Handoff unexpected error to '{}' ({}): {}", target, abbreviate_path(url, 50), exc)
             return f"Error: Unexpected error during handoff — {exc}"
 
     # ------------------------------------------------------------------
