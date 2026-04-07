@@ -1,13 +1,17 @@
 """Webhook channel with slot-based routing (fork-local).
 
 Each *slot* is a named webhook receiver with its own:
-- HTTP path (e.g. ``/webhook/swarm``, ``/webhook/crm``)
+- HTTP path (e.g. ``/webhook/crm``, ``/webhook/n8n``)
 - Bearer token for authentication
-- Handler type (``standard``, ``swarm``, ``raw``)
+- Handler type (``standard``, ``raw``)
 - Mapping templates for payload extraction
 - Optional fixed session key
 
 Slots are configured in ``channels.webhook.slots`` in ``config.json``.
+
+Note: Swarm inter-agent communication has been migrated to the API server
+endpoint ``/v1/swarm/handoff``.  The webhook channel no longer handles
+swarm payloads.
 """
 
 import asyncio
@@ -32,14 +36,14 @@ class WebhookSlot:
     """A single named webhook receiver configuration.
 
     Handler type is derived from the slot name for built-in types
-    (``swarm``, ``raw``).  All other names default to ``standard``.
+    (``raw``).  All other names default to ``standard``.
     Path defaults to ``/webhook/{name}`` (or ``/webhook`` for "default").
     """
 
     __slots__ = ("name", "path", "token", "handler", "mappings", "session_key", "allow_from")
 
     # Built-in handler types that auto-resolve from slot name
-    _BUILTIN_HANDLERS = frozenset({"swarm", "raw"})
+    _BUILTIN_HANDLERS = frozenset({"raw"})
 
     def __init__(self, name: str, cfg: dict[str, Any]) -> None:
         self.name = name
@@ -213,9 +217,7 @@ class WebhookChannel(BaseChannel):
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         # Dispatch by handler type
-        if slot.handler == "swarm":
-            return await self._handle_swarm(slot, body)
-        elif slot.handler == "raw":
+        if slot.handler == "raw":
             return await self._handle_raw(slot, body)
         else:
             return await self._handle_standard(slot, body)
@@ -273,84 +275,6 @@ class WebhookChannel(BaseChannel):
             media=[],
         )
         return web.json_response({"ok": True, "slot": slot.name, "sender_id": sender})
-
-    # ------------------------------------------------------------------ #
-    # Handler: swarm (inter-agent handoff)                                #
-    # ------------------------------------------------------------------ #
-
-    async def _handle_swarm(self, slot: WebhookSlot, body: dict) -> web.Response:
-        """Process swarm handoff payload.
-
-        Extracts machine metadata into InboundMessage.metadata (invisible to
-        the LLM) and formats the task + data as clean text for the agent.
-        """
-        task = body.get("task", "")
-        data = body.get("data")
-        msg_type = body.get("type", "task")
-        origin = body.get("origin", {})
-        chain_id = body.get("chain_id", "default")
-
-        sender = origin.get("agent", "swarm")
-        session_key = f"swarm:{chain_id}"
-
-        # (fork-local) Validate required swarm fields — log error to session
-        if not task:
-            self._log_to_session(
-                session_key,
-                f"[VALIDATION ERROR] Missing 'task' field from '{sender}' "
-                f"via slot '{slot.name}' (chain={chain_id}). "
-                f"Raw keys: {list(body.keys())}",
-            )
-            return web.json_response({"error": "Missing 'task' field"}, status=400)
-
-        # Machine metadata — accessible to HandoffTool, hidden from LLM
-        metadata = {
-            "_swarm": True,
-            "_chain_id": chain_id,
-            "_hop_count": body.get("hop_count", 0),
-            "_origin": origin,
-            "_human": body.get("human", {}),
-            "_type": msg_type,
-            "_slot": slot.name,
-        }
-
-        # Build LLM-visible content (fork-local: inject swarm context)
-        content_parts: list[str] = [
-            f"[Swarm Metadata]\nOrigin: {sender}\nType: {msg_type}\nChain: {chain_id}\n---",
-            task
-        ]
-        if data:
-            if isinstance(data, str) and data.strip():
-                content_parts.append(f"\nДанные:\n{data}")
-            elif isinstance(data, (dict, list)):
-                content_parts.append(
-                    f"\nДанные:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
-                )
-        text = "\n".join(content_parts)
-
-        logger.info(
-            "Swarm {} from '{}' via slot '{}' (chain={}, hop={}): {}",
-            msg_type, sender, slot.name, chain_id,
-            body.get("hop_count", 0), task[:80],
-        )
-
-        await self._handle_message(
-            sender_id=sender,
-            chat_id=session_key,
-            content=text,
-            media=[],
-            metadata=metadata,
-        )
-
-        # (fork-local) Log successful swarm handoff to session
-        self._log_to_session(
-            session_key,
-            f"[SWARM OK] type={msg_type} from='{sender}' slot='{slot.name}' "
-            f"chain={chain_id} hop={body.get('hop_count', 0)} "
-            f"task={task[:120]}",
-        )
-
-        return web.json_response({"ok": True, "swarm": True, "chain_id": chain_id})
 
     # ------------------------------------------------------------------ #
     # Handler: raw (pass full body as JSON)                               #

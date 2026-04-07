@@ -1,9 +1,13 @@
-"""Handoff tool for inter-agent task delegation across containers (fork-local).
+"""Handoff tool for inter-agent task delegation via nanobot-api (fork-local).
 
-Enables agents running in separate Docker containers to communicate via HTTP
-webhooks.  Each agent maintains its own isolated context; the handoff tool
-provides the bridge by POSTing structured payloads to a peer's WebhookChannel
-endpoint.
+Enables agents running in separate Docker containers to communicate via the
+OpenAI-compatible ``/v1/swarm/handoff`` API endpoint.  Each agent maintains
+its own isolated context; the handoff tool provides the bridge by POSTing
+structured payloads to a peer's nanobot-api endpoint.
+
+The handoff is **asynchronous** — the caller does not wait for the target
+agent to finish processing.  When the target agent completes the task, it
+calls back the origin agent's API with a ``type: "result"`` payload.
 
 Configuration lives in ``workspace/swarm.json`` (never in core config.json).
 
@@ -11,11 +15,11 @@ Minimal config example::
 
     {
         "peers": {
-            "aggregator": "secret-token"
+            "shantra": ""
         }
     }
 
-The peer URL is auto-resolved as ``http://{peer_name}:{port}/webhook/swarm``
+The peer URL is auto-resolved as ``http://{peer_name}:{port}/v1/swarm/handoff``
 unless explicitly overridden.
 """
 
@@ -34,11 +38,11 @@ from nanobot.agent.tools.base import Tool
 
 
 class HandoffTool(Tool):
-    """Tool to hand off tasks to peer agents in the swarm (fork-local)."""
+    """Tool to hand off tasks to peer agents in the swarm via API (fork-local)."""
 
     _SWARM_CONFIG_FILE = "swarm.json"
-    _DEFAULT_PORT = 1987
-    _DEFAULT_SLOT_PATH = "/webhook/swarm"
+    _DEFAULT_PORT = 8900
+    _DEFAULT_ENDPOINT = "/v1/swarm/handoff"
 
     def __init__(self, workspace: Path) -> None:
         self._workspace = workspace
@@ -75,12 +79,14 @@ class HandoffTool(Tool):
         peers = list(self._peers.keys())
         peer_list = ", ".join(peers) if peers else "none configured"
         return (
-            "Communication channel between swarm agents. "
-            "MANDATORY: Use this tool with type='peer-response' or type='result' to reply to incoming Swarm tasks. "
-            "Use type='task' to delegate new sub-tasks to specialists. "
-            "NEVER use plain text to communicate with peer agents; always use THIS tool. "
-            f"Available target peers: [{peer_list}]. "
-            "Types: 'task' (delegation), 'result' (returning answer to origin), 'notification' (status)."
+            "Delegate tasks to specialist peer agents in the swarm network. "
+            "The task is sent ASYNCHRONOUSLY — you will NOT receive the result "
+            "immediately.  The target agent will process the task and deliver "
+            "the result back to this agent's session later. "
+            "Use type='task' to delegate new sub-tasks. "
+            "Use type='result' to return completed work to the origin agent. "
+            "Use type='notification' for lightweight status updates. "
+            f"Available target peers: [{peer_list}]."
         )
 
     @property
@@ -122,7 +128,7 @@ class HandoffTool(Tool):
         type: str = "task",
         **kwargs: Any,
     ) -> str:
-        """Execute handoff: POST payload to target agent's webhook."""
+        """Execute handoff: POST payload to target agent's /v1/swarm/handoff."""
         if target not in self._peers:
             available = list(self._peers.keys())
             return (
@@ -132,7 +138,7 @@ class HandoffTool(Tool):
 
         peer = self._peers[target]
         url = peer["url"]
-        token = peer["token"]
+        token = peer.get("token", "")
 
         # ---- Anti-loop protection ----
         hop_count = self._swarm_ctx.get("_hop_count", 0) + 1
@@ -155,20 +161,21 @@ class HandoffTool(Tool):
         payload: dict[str, Any] = {
             "task": task,
             "data": data,
+            "type": type,
+            "chain_id": chain_id,
+            "hop_count": hop_count,
+            "max_hops": max_hops,
             "origin": {
                 "agent": identity,
                 "url": self._build_self_url(),
             },
-            "chain_id": chain_id,
-            "hop_count": hop_count,
             "human": self._swarm_ctx.get("_human") or {
                 "channel": self._origin_channel,
                 "chat_id": self._origin_chat_id,
             },
-            "type": type,
         }
 
-        # ---- Send ----
+        # ---- Send (async fire-and-forget: expect 202 Accepted) ----
         try:
             async with aiohttp.ClientSession() as session:
                 headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -176,14 +183,16 @@ class HandoffTool(Tool):
                     headers["Authorization"] = f"Bearer {token}"
 
                 async with session.post(
-                    url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15),
+                    url, json=payload, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
-                    if resp.status == 200:
+                    if resp.status in (200, 202):
                         self._log_handoff(chain_id, target, hop_count, type)
                         return (
                             f"✓ Task handed off to '{target}' "
                             f"(chain: {chain_id}, hop: {hop_count}/{max_hops}). "
-                            "SUCCESS. Do NOT output any conversational text or 'continue' messages. End your turn immediately."
+                            "The target agent is processing asynchronously. "
+                            "The result will arrive in this session when ready."
                         )
                     body_text = await resp.text()
                     logger.error(
@@ -214,25 +223,25 @@ class HandoffTool(Tool):
         return os.environ.get("HOSTNAME", "unknown-agent")
 
     def _build_self_url(self) -> str:
-        """Construct this agent's own webhook URL for callbacks (fork-local)."""
+        """Construct this agent's own API URL for callbacks (fork-local)."""
         explicit = self._config.get("self_url")
         if explicit:
             return explicit
 
         port = self._config.get("port", self._DEFAULT_PORT)
         host = self._get_identity()
-        return f"http://{host}:{port}{self._DEFAULT_SLOT_PATH}"
+        return f"http://{host}:{port}{self._DEFAULT_ENDPOINT}"
 
     def _build_peer_url(self, peer_name: str) -> str:
-        """Construct a peer's webhook URL using convention.
+        """Construct a peer's API URL using convention.
 
         Uses ``url_template`` from config if available, otherwise defaults to
-        ``http://{target}:{port}/webhook/swarm``.
+        ``http://{target}:{port}/v1/swarm/handoff``.
         """
         port = self._config.get("port", self._DEFAULT_PORT)
         template = self._config.get(
             "url_template",
-            f"http://{{target}}:{port}{self._DEFAULT_SLOT_PATH}",
+            f"http://{{target}}:{port}{self._DEFAULT_ENDPOINT}",
         )
         return template.replace("{target}", peer_name)
 
@@ -241,11 +250,11 @@ class HandoffTool(Tool):
 
         Supports two formats in swarm.json::
 
-            # Short: just a token string
-            "peers": { "aggregator": "secret-token" }
+            # Short: just a token string (empty string = no auth)
+            "peers": { "shantra": "" }
 
-            # Full: object with token and optional url
-            "peers": { "aggregator": { "token": "secret-token", "url": "http://..." } }
+            # Full: object with optional token and url
+            "peers": { "shantra": { "token": "", "url": "http://..." } }
 
         Returns a dict of ``{ name: { "token": str, "url": str } }``.
         """

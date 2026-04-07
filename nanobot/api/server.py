@@ -1,7 +1,10 @@
 """OpenAI-compatible HTTP API server for a fixed nanobot session.
 
-Provides /v1/chat/completions and /v1/models endpoints.
+Provides /v1/chat/completions, /v1/models, and /v1/swarm/handoff endpoints.
 All requests route to a single persistent API session.
+
+The /v1/swarm/handoff endpoint (fork-local) enables async inter-agent
+task delegation within the swarm network.
 """
 
 from __future__ import annotations
@@ -172,6 +175,92 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Swarm handoff (fork-local)
+# ---------------------------------------------------------------------------
+
+async def handle_swarm_handoff(request: web.Request) -> web.Response:
+    """POST /v1/swarm/handoff — async inter-agent task delegation (fork-local).
+
+    Accepts a swarm task payload, queues it for background processing via
+    the agent loop, and returns 202 Accepted immediately.  The receiving
+    agent processes the task asynchronously; when finished it calls back
+    the origin agent's ``/v1/swarm/handoff`` with ``type: "result"``.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _error_json(400, "Invalid JSON body")
+
+    task = body.get("task", "")
+    data = body.get("data", "")
+    chain_id = body.get("chain_id") or uuid.uuid4().hex[:8]
+    hop_count = body.get("hop_count", 0)
+    max_hops = body.get("max_hops", 5)
+    msg_type = body.get("type", "task")
+    origin = body.get("origin", {})
+    human = body.get("human", {})
+
+    if not task:
+        return _error_json(400, "Missing 'task' field")
+
+    # Build LLM-visible content with embedded swarm metadata
+    sender = origin.get("agent", "unknown")
+    content_parts: list[str] = [
+        f"[Swarm chain={chain_id} hop={hop_count}/{max_hops} "
+        f"from={sender} type={msg_type}]",
+        "---",
+        task,
+    ]
+    if data:
+        content_parts.append(f"\nДанные:\n{data}")
+    content = "\n".join(content_parts)
+
+    session_key = f"swarm:{chain_id}"
+    agent_loop = request.app["agent_loop"]
+
+    # Machine metadata — passed to AgentLoop via InboundMessage.metadata
+    metadata = {
+        "_swarm": True,
+        "_chain_id": chain_id,
+        "_hop_count": hop_count,
+        "_max_hops": max_hops,
+        "_origin": origin,
+        "_human": human,
+        "_type": msg_type,
+    }
+
+    logger.info(
+        "Swarm handoff {} from '{}' (chain={}, hop={}/{}): {}",
+        msg_type, sender, chain_id, hop_count, max_hops, task[:80],
+    )
+
+    # Fire-and-forget: process in background
+    async def _process_handoff() -> None:
+        try:
+            from nanobot.bus.events import InboundMessage
+
+            msg = InboundMessage(
+                channel="swarm",
+                sender_id=sender,
+                chat_id=chain_id,
+                content=content,
+                metadata=metadata,
+            )
+            await agent_loop._process_message(msg, session_key=session_key)
+        except Exception:
+            logger.exception(
+                "Swarm handoff processing failed for chain {}", chain_id,
+            )
+
+    asyncio.create_task(_process_handoff())
+
+    return web.json_response(
+        {"ok": True, "chain_id": chain_id, "session_key": session_key},
+        status=202,
+    )
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -190,6 +279,7 @@ def create_app(agent_loop, model_name: str = "nanobot", request_timeout: float =
     app["session_locks"] = {}  # per-user locks, keyed by session_key
 
     app.router.add_post("/v1/chat/completions", handle_chat_completions)
+    app.router.add_post("/v1/swarm/handoff", handle_swarm_handoff)  # (fork-local)
     app.router.add_get("/v1/models", handle_models)
     app.router.add_get("/health", handle_health)
     return app
