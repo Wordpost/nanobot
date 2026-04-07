@@ -75,12 +75,13 @@ class HandoffTool(Tool):
         peers = list(self._peers.keys())
         peer_list = ", ".join(peers) if peers else "none configured"
         return (
-            "Communication channel between swarm agents. "
-            "MANDATORY: Use this tool with type='peer-response' or type='result' to reply to incoming Swarm tasks. "
-            "Use type='task' to delegate new sub-tasks to specialists. "
-            "NEVER use plain text to communicate with peer agents; always use THIS tool. "
+            "Delegate sub-tasks to specialist peer agents in the swarm. "
+            "Use ONLY for dispatching NEW tasks to peers. "
+            "Do NOT use this tool to return or relay results — results are "
+            "delivered automatically via the transport layer. "
+            "When you receive a swarm task, just answer with plain text; "
+            "the system will route your answer back to the caller. "
             f"Available target peers: [{peer_list}]. "
-            "Types: 'task' (delegation), 'result' (returning answer to origin), 'notification' (status)."
         )
 
     @property
@@ -148,6 +149,22 @@ class HandoffTool(Tool):
                 "Cannot hand off — summarize results and report to the user instead."
             )
 
+        # Prevent ping-pong: block handoff back to the agent that sent
+        # the current swarm task.  Results flow back automatically via
+        # the WebhookChannel callback mechanism.  (fork-local)
+        origin_agent = self._swarm_ctx.get("_origin", {}).get("agent", "")
+        if origin_agent and target == origin_agent:
+            logger.info(
+                "Swarm anti-loop: blocked handoff back to origin '{}' "
+                "(chain={}). Result delivered automatically.",
+                origin_agent, self._swarm_ctx.get("_chain_id", "?"),
+            )
+            return (
+                "Results are delivered automatically — do NOT use handoff "
+                "to reply to the calling agent. Just respond with plain text "
+                "and the system will route your answer back."
+            )
+
         # ---- Build payload ----
         chain_id = self._swarm_ctx.get("_chain_id") or uuid.uuid4().hex[:8]
         identity = self._get_identity()
@@ -181,9 +198,9 @@ class HandoffTool(Tool):
                     if resp.status == 200:
                         self._log_handoff(chain_id, target, hop_count, type)
                         return (
-                            f"✓ Task handed off to '{target}' "
-                            f"(chain: {chain_id}, hop: {hop_count}/{max_hops}). "
-                            "SUCCESS. Do NOT output any conversational text or 'continue' messages. End your turn immediately."
+                            f"✓ Task handed off (chain: {chain_id}, hop: {hop_count}/{max_hops}). "
+                            "Processing asynchronously, result will arrive automatically. "
+                            "Do NOT guess or fabricate the result."
                         )
                     body_text = await resp.text()
                     logger.error(
