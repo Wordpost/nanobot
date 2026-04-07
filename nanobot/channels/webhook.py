@@ -15,6 +15,8 @@ import json
 import re
 from typing import Any
 
+import aiohttp
+
 from aiohttp import web
 from loguru import logger
 
@@ -72,6 +74,11 @@ class WebhookChannel(BaseChannel):
         self._stop_event = asyncio.Event()
         self._slots: dict[str, WebhookSlot] = {}  # path → slot
         self._session_mgr: SessionManager | None = None  # (fork-local) lazy init
+        # (fork-local) Swarm route cache for callback delivery.
+        # Stores {session_key → {origin, human, token, chain_id}} so that
+        # send() can POST results/errors back even when _dispatch() error
+        # handler strips metadata from OutboundMessage.
+        self._swarm_routes: dict[str, dict[str, Any]] = {}
         self._build_slots()
 
     # ------------------------------------------------------------------ #
@@ -184,8 +191,101 @@ class WebhookChannel(BaseChannel):
         self._stop_event.set()
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Deliver outbound (log-only for webhooks unless callback configured)."""
-        logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
+        """Deliver outbound — POST callback for swarm, log-only otherwise (fork-local).
+
+        When Shantra (or any swarm peer) finishes processing a task, the
+        AgentLoop publishes an OutboundMessage with ``channel="webhook"``.
+        This method detects swarm-originated messages and POSTs the result
+        back to the origin agent's webhook, carrying the human coordinates
+        so the receiver can route the final answer to the right Telegram chat.
+
+        Two paths supply swarm routing info:
+        - **Success path**: ``msg.metadata`` contains ``_origin`` / ``_human``
+          (copied from InboundMessage by ``loop.py:624``).
+        - **Error path**: ``_dispatch()`` builds a bare OutboundMessage without
+          metadata, so we fall back to ``_swarm_routes[chat_id]`` cached during
+          ``_handle_swarm()``.
+        """
+        # ── Non-swarm outbound: just log ──
+        if not msg.chat_id.startswith("swarm:"):
+            logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
+            return
+
+        # ── Resolve swarm routing info ──
+        meta = msg.metadata or {}
+        origin = meta.get("_origin")
+        human = meta.get("_human")
+        chain_id = meta.get("_chain_id", "")
+        token: str | None = None
+
+        route = self._swarm_routes.pop(msg.chat_id, None)
+
+        if not origin and route:
+            # Error path — metadata was stripped by _dispatch()
+            origin = route.get("origin")
+            human = route.get("human")
+            chain_id = route.get("chain_id", chain_id)
+        if route:
+            token = route.get("token")
+
+        if not origin or not origin.get("url"):
+            logger.warning(
+                "[webhook] swarm outbound for '{}' has no callback URL — dropped",
+                msg.chat_id,
+            )
+            return
+
+        # ── Determine callback type ──
+        # Success path preserves _swarm in metadata; error path does not.
+        callback_type = "result" if meta.get("_swarm") else "error"
+
+        # ── Auth token fallback: use our own swarm slot token ──
+        if not token:
+            for s in self._slots.values():
+                if s.handler == "swarm":
+                    token = s.token
+                    break
+
+        # ── Build callback payload ──
+        callback_url = origin["url"]
+        payload: dict[str, Any] = {
+            "type": callback_type,
+            "task": msg.content,  # re-use 'task' field for payload consistency
+            "origin": {"agent": "callback"},
+            "chain_id": chain_id,
+            "human": human or {},
+        }
+        if callback_type == "error":
+            payload["error"] = msg.content
+        else:
+            payload["result"] = msg.content
+
+        # ── POST callback ──
+        try:
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    callback_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info(
+                            "[webhook] callback -> {} (type={}): OK",
+                            callback_url, callback_type,
+                        )
+                    else:
+                        body = await resp.text()
+                        logger.error(
+                            "[webhook] callback -> {} failed: HTTP {} — {}",
+                            callback_url, resp.status, body[:200],
+                        )
+        except Exception as exc:
+            logger.error("[webhook] callback to {} failed: {}", callback_url, exc)
 
     # ------------------------------------------------------------------ #
     # Request handling — slot dispatcher                                  #
@@ -279,10 +379,20 @@ class WebhookChannel(BaseChannel):
     # ------------------------------------------------------------------ #
 
     async def _handle_swarm(self, slot: WebhookSlot, body: dict) -> web.Response:
-        """Process swarm handoff payload.
+        """Process swarm handoff payload (fork-local).
 
-        Extracts machine metadata into InboundMessage.metadata (invisible to
-        the LLM) and formats the task + data as clean text for the agent.
+        Handles three message types:
+
+        - **task**: New work from a peer.  Extracts machine metadata into
+          ``InboundMessage.metadata`` (invisible to the LLM) and formats the
+          task + data as clean text for the agent.
+        - **result**: Callback from a peer that finished its work.  The raw
+          result text is delivered **directly** to the human's Telegram chat
+          (no LLM round-trip) via ``bus.publish_outbound``.
+        - **error**: Callback from a peer that failed.  The error is injected
+          into the human's **original session** as a ``system`` inbound
+          message so the local AgentLoop can process it through LLM and
+          present a user-friendly error.
         """
         task = body.get("task", "")
         data = body.get("data")
@@ -292,6 +402,59 @@ class WebhookChannel(BaseChannel):
 
         sender = origin.get("agent", "swarm")
         session_key = f"swarm:{chain_id}"
+        human = body.get("human", {})
+
+        # ── type="result" — direct delivery to human (no LLM) ──
+        if msg_type == "result":
+            h_channel = human.get("channel")
+            h_chat_id = human.get("chat_id")
+            result_text = body.get("result") or task
+
+            if h_channel and h_chat_id:
+                await self.bus.publish_outbound(OutboundMessage(
+                    channel=h_channel,
+                    chat_id=h_chat_id,
+                    content=result_text,
+                ))
+                logger.info(
+                    "[swarm] result delivered to {}:{} from '{}' (chain={})",
+                    h_channel, h_chat_id, sender, chain_id,
+                )
+            else:
+                logger.error(
+                    "[swarm] result callback missing human coords: {}", human,
+                )
+            return web.json_response({"ok": True, "delivered": True})
+
+        # ── type="error" — inject into human session for LLM processing ──
+        if msg_type == "error":
+            h_channel = human.get("channel")
+            h_chat_id = human.get("chat_id")
+            error_text = body.get("error") or task
+
+            if h_channel and h_chat_id:
+                from nanobot.bus.events import InboundMessage
+                error_msg = InboundMessage(
+                    channel="system",
+                    sender_id=f"swarm:{sender}",
+                    chat_id=f"{h_channel}:{h_chat_id}",
+                    content=(
+                        f"⚠️ Swarm agent '{sender}' reported an error "
+                        f"(chain={chain_id}):\n{error_text}"
+                    ),
+                )
+                await self.bus.publish_inbound(error_msg)
+                logger.info(
+                    "[swarm] error injected into {}:{} from '{}' (chain={})",
+                    h_channel, h_chat_id, sender, chain_id,
+                )
+            else:
+                logger.error(
+                    "[swarm] error callback missing human coords: {}", human,
+                )
+            return web.json_response({"ok": True, "delivered": True})
+
+        # ── type="task" (default) — hand off work to local agent ──
 
         # (fork-local) Validate required swarm fields — log error to session
         if not task:
@@ -303,13 +466,22 @@ class WebhookChannel(BaseChannel):
             )
             return web.json_response({"error": "Missing 'task' field"}, status=400)
 
+        # (fork-local) Cache route for send() callback — needed especially
+        # for the error path where _dispatch() strips metadata.
+        self._swarm_routes[session_key] = {
+            "origin": origin,
+            "human": human,
+            "token": slot.token,
+            "chain_id": chain_id,
+        }
+
         # Machine metadata — accessible to HandoffTool, hidden from LLM
         metadata = {
             "_swarm": True,
             "_chain_id": chain_id,
             "_hop_count": body.get("hop_count", 0),
             "_origin": origin,
-            "_human": body.get("human", {}),
+            "_human": human,
             "_type": msg_type,
             "_slot": slot.name,
         }
