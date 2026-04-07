@@ -13,6 +13,7 @@ Slots are configured in ``channels.webhook.slots`` in ``config.json``.
 import asyncio
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -190,6 +191,24 @@ class WebhookChannel(BaseChannel):
         self._running = False
         self._stop_event.set()
 
+    def _get_peer_token(self, target_agent: str) -> str | None:
+        """(fork-local) Fetch callback token for the target agent from swarm.json."""
+        workspace = Path(self._cfg("workspace", str(Path.home() / ".nanobot" / "workspace")))
+        path = workspace / "swarm.json"
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.loads(f.read())
+            peer = data.get("peers", {}).get(target_agent)
+            if isinstance(peer, str):
+                return peer
+            if isinstance(peer, dict):
+                return peer.get("token")
+        except Exception as exc:
+            logger.warning("Failed to parse swarm.json for token: {}", exc)
+        return None
+
     async def send(self, msg: OutboundMessage) -> None:
         """Deliver outbound — POST callback for swarm, log-only otherwise (fork-local).
 
@@ -216,7 +235,6 @@ class WebhookChannel(BaseChannel):
         origin = meta.get("_origin")
         human = meta.get("_human")
         chain_id = meta.get("_chain_id", "")
-        token: str | None = None
 
         route = self._swarm_routes.pop(msg.chat_id, None)
 
@@ -225,8 +243,6 @@ class WebhookChannel(BaseChannel):
             origin = route.get("origin")
             human = route.get("human")
             chain_id = route.get("chain_id", chain_id)
-        if route:
-            token = route.get("token")
 
         if not origin or not origin.get("url"):
             logger.warning(
@@ -238,6 +254,14 @@ class WebhookChannel(BaseChannel):
         # ── Determine callback type ──
         # Success path preserves _swarm in metadata; error path does not.
         callback_type = "result" if meta.get("_swarm") else "error"
+
+        # ── Resolve callback token — prioritize configured peer token over slot fallback ──
+        # Target agent's expected token must be retrieved from swarm.json.
+        token: str | None = None
+        target_agent = origin.get("agent")
+        if target_agent:
+            token = self._get_peer_token(target_agent)
+            logger.info("Loaded peer token for '{}': {}", target_agent, repr(token))
 
         # ── Auth token fallback: use our own swarm slot token ──
         if not token:
@@ -341,7 +365,7 @@ class WebhookChannel(BaseChannel):
             return web.json_response({"error": "Unauthorized"}, status=401)
 
         if not hmac.compare_digest(auth_header[7:], token):
-            logger.warning("Auth failed on slot '{}': Invalid token.", slot.name)
+            logger.warning("Auth failed on slot '{}': Expected {}, Received {}.", slot.name, repr(token), repr(auth_header[7:]))
             return web.json_response({"error": "Unauthorized"}, status=401)
 
         return None
@@ -404,22 +428,31 @@ class WebhookChannel(BaseChannel):
         session_key = f"swarm:{chain_id}"
         human = body.get("human", {})
 
-        # ── type="result" — direct delivery to human (no LLM) ──
+        # ── type="result" — save to session + notify real channels (fork-local) ──
         if msg_type == "result":
             h_channel = human.get("channel")
             h_chat_id = human.get("chat_id")
             result_text = body.get("result") or task
 
             if h_channel and h_chat_id:
-                await self.bus.publish_outbound(OutboundMessage(
-                    channel=h_channel,
-                    chat_id=h_chat_id,
-                    content=result_text,
-                ))
-                logger.info(
-                    "[swarm] result delivered to {}:{} from '{}' (chain={})",
-                    h_channel, h_chat_id, sender, chain_id,
+                # Append result directly to the session JSONL file.
+                # We bypass SessionManager.get_or_create / .save to avoid
+                # a cache‑conflict with the AgentLoop's own SessionManager
+                # instance (both hold an independent in‑memory _cache dict
+                # and would overwrite each other's view of the session).
+                self._append_swarm_result_to_session(
+                    h_channel, h_chat_id, sender, chain_id, result_text,
                 )
+
+                # For real channels (telegram, discord, etc.) also push
+                # a live notification so the human sees it immediately.
+                _VIRTUAL_CHANNELS = frozenset({"api", "cli", "system"})
+                if h_channel not in _VIRTUAL_CHANNELS:
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=h_channel,
+                        chat_id=h_chat_id,
+                        content=result_text,
+                    ))
             else:
                 logger.error(
                     "[swarm] result callback missing human coords: {}", human,
@@ -471,7 +504,6 @@ class WebhookChannel(BaseChannel):
         self._swarm_routes[session_key] = {
             "origin": origin,
             "human": human,
-            "token": slot.token,
             "chain_id": chain_id,
         }
 
@@ -557,6 +589,50 @@ class WebhookChannel(BaseChannel):
             self._session_mgr = SessionManager(workspace)
         return self._session_mgr
 
+    def _append_swarm_result_to_session(
+        self,
+        h_channel: str,
+        h_chat_id: str,
+        sender: str,
+        chain_id: str,
+        result_text: str,
+    ) -> None:
+        """Append a swarm result as an assistant message to the session JSONL file (fork-local).
+
+        Uses direct file‑append (``mode='a'``) instead of
+        ``SessionManager.save()`` to avoid cache conflicts with the
+        AgentLoop's own SessionManager instance.  The AgentLoop reloads
+        sessions from disk on each new request, so the appended line
+        will be picked up automatically.
+        """
+        from datetime import datetime
+        from nanobot.utils.helpers import safe_filename
+
+        session_key = f"{h_channel}:{h_chat_id}"
+        workspace = get_workspace_path(self._cfg("workspace"))
+        safe_key = safe_filename(session_key.replace(":", "_"))
+        session_path = workspace / "sessions" / f"{safe_key}.jsonl"
+
+        entry = {
+            "role": "user",
+            "content": f"[Результат от агента {sender}]\n{result_text}",
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        try:
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(session_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            logger.info(
+                "[swarm] result appended to session '{}' from '{}' (chain={})",
+                session_key, sender, chain_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "[swarm] failed to append result to session '{}': {}",
+                session_key, exc,
+            )
+
     def _log_to_session(self, session_key: str, content: str) -> None:
         """Append a webhook_log entry directly into the session file (fork-local).
 
@@ -565,8 +641,10 @@ class WebhookChannel(BaseChannel):
         LLM but remain visible in the Forensic Viewer and raw JSONL.
         """
         try:
+            # Match the InboundMessage session key format used by AgentLoop
+            actual_key = session_key if session_key.startswith("webhook:") else f"webhook:{session_key}"
             mgr = self._get_session_manager()
-            session = mgr.get_or_create(session_key)
+            session = mgr.get_or_create(actual_key)
             session.add_message(
                 role="system",
                 content=content,
