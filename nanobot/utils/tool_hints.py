@@ -15,6 +15,7 @@ _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "web_search": (["query"],                          'search "{}"', False, False),
     "web_fetch":  (["url"],                            "fetch {}",    True,  False),
     "list_dir":   (["path"],                           "ls {}",       True,  False),
+    "handoff":    (["target"],                         "→ swarm:{}",  False, False),  # (fork-local)
 }
 
 
