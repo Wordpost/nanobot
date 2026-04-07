@@ -18,6 +18,7 @@ from nanobot.agent.memory import Consolidator, Dream
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.hooks.usage_tracker import UsageTrackerHook  # (fork-local)
 from nanobot.agent.tools.handoff import HandoffTool  # (fork-local) swarm
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
@@ -211,7 +212,9 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
-        self._extra_hooks: list[AgentHook] = hooks or []
+        # (fork-local) Usage tracking via hook instead of inline calls
+        self._usage_hook = UsageTrackerHook()
+        self._extra_hooks: list[AgentHook] = [self._usage_hook] + (hooks or [])
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
@@ -531,6 +534,7 @@ class AgentLoop:
                 self.sessions.save(session)
             await self.consolidator.maybe_consolidate_by_tokens(session)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._usage_hook.bind_session(session)  # (fork-local)
             history = session.get_history(max_messages=0)
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
@@ -543,7 +547,6 @@ class AgentLoop:
                 message_id=msg.metadata.get("message_id"),
             )
             self._save_turn(session, all_msgs, 1 + len(history))
-            self._append_usage_record(session, self._last_usage)
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
             self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
@@ -566,6 +569,7 @@ class AgentLoop:
 
         await self.consolidator.maybe_consolidate_by_tokens(session)
 
+        self._usage_hook.bind_session(session)  # (fork-local)
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         # (fork-local) Propagate swarm chain metadata to HandoffTool
         if msg.metadata.get("_swarm"):
@@ -605,7 +609,6 @@ class AgentLoop:
             final_content = EMPTY_FINAL_RESPONSE_MESSAGE
 
         self._save_turn(session, all_msgs, 1 + len(history))
-        self._append_usage_record(session, self._last_usage)
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
@@ -698,19 +701,7 @@ class AgentLoop:
             session.messages.append(entry)
         session.updated_at = datetime.now()
 
-    def _append_usage_record(self, session: Session, usage: dict[str, int] | None) -> None:
-        """Persist token usage metrics as a special record in the session (fork-local)."""
-        if not usage:
-            return
-        from datetime import datetime
-        session.messages.append({
-            "_type": "usage",
-            "prompt_tokens": usage.get("prompt_tokens", 0),
-            "completion_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
-            "cached_tokens": usage.get("cached_tokens", 0),
-            "timestamp": datetime.now().isoformat(),
-        })
+
 
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
         """Persist the latest in-flight turn state into session metadata."""
