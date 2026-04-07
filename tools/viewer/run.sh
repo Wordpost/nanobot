@@ -15,7 +15,7 @@ if [ -d "frontend" ] && command -v npm &> /dev/null; then
     echo "[Info] Checking frontend dependencies and building Static SPA..."
     cd frontend
     if [ ! -d "node_modules" ]; then
-        npm install
+        npm ci
     fi
     npm run build
     cd ..

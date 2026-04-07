@@ -18,7 +18,7 @@ if exist "frontend" (
     if %errorlevel% equ 0 (
         echo [Info] Checking frontend dependencies and building Static SPA...
         pushd frontend
-        if not exist "node_modules" call npm install
+        if not exist "node_modules" call npm ci
         call npm run build
         popd
     )
