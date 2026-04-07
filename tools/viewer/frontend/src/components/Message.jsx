@@ -39,7 +39,12 @@ export function Message({ msg, index, onRefresh }) {
 
   return (
     <div class={`message ${role}`}>
-      {usage && <UsageBadge usage={usage} />}
+      {usage && (
+        <div class="message-usage-container">
+          {msg.model && <span class="message-model-info">{msg.model}</span>}
+          <UsageBadge usage={usage} model={msg.model} />
+        </div>
+      )}
 
       <div class={`message-header ${isToolResult ? 'tool-toggle' : ''}`}
         onClick={isToolResult ? () => setToolContentOpen(!toolContentOpen) : undefined}>

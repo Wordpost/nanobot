@@ -1656,10 +1656,40 @@ em {
   flex-shrink: 0;
 }
 
-.message-header .usage-badge {
+.message-usage-container {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
   position: absolute;
   top: -10px;
-  right: 10px;
+  right: 12px;
+  z-index: 5;
+}
+
+.message-model-info {
+  font-size: var(--fs-9);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: var(--sp-1) var(--sp-6);
+  border-radius: 3px;
+  border: 1px solid var(--border-muted);
+  opacity: 0.8;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-cost {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-8);
+  padding-left: var(--sp-4);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  margin-left: var(--sp-2);
+  color: var(--accent-amber);
+  font-weight: 500;
 }
 
 .usage-cached {
