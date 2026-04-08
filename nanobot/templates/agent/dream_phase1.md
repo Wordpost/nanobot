@@ -17,6 +17,7 @@ Staleness — flag for [FILE-REMOVE]:
 - Resolved tracking: merged/closed PRs, fixed issues, completed migrations
 - Detailed incident info after 14 days — reduce to one-line summary
 - Superseded: approaches replaced by newer solutions, deprecated dependencies
+- Swarm metadata: completed handoff logs, inter-agent intermediate results, routing traces, and temporary task queues
 
 Do not add: current weather, transient status, temporary errors, conversational filler.
 
