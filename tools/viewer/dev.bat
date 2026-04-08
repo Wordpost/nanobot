@@ -13,7 +13,7 @@ if not exist "venv\Scripts\activate.bat" (
     exit /b 1
 )
 
-echo [Info] Starting FastAPI Backend (Port 2003)...
+echo [Info] Starting FastAPI Backend (Port 2004)...
 start "Vivir Backend" cmd /k "call venv\Scripts\activate.bat && title Vivir Backend && python -m src.app"
 
 echo [Info] Starting Vite Dev Server (HMR, Port 5173)...
@@ -29,7 +29,7 @@ if exist "frontend" (
 echo.
 echo =========================================================
 echo [Success] Development mode initiated!
-echo 1. Backend window opened (FastAPI: 2003)
+echo 1. Backend window opened (FastAPI: 2004)
 echo 2. Frontend window opened (Vite: 5173)
 echo.
 echo Please open http://localhost:5173 in your browser for development.

@@ -1,167 +1,127 @@
-/** @module utils/markdown — Line-by-line markdown renderer (fork-local)
- *  Migrated from legacy ui.js renderMarkdown().
+/** @module utils/markdown — Markdown renderer using marked + highlight.js (fork-local)
  *  Returns HTML string — use with dangerouslySetInnerHTML.
+ *  Replaces the legacy 168-line regex-based renderer.
  */
 
-import { escapeHtml } from './format.js'
+import { Marked } from 'marked'
+import hljs from 'highlight.js/lib/core'
 
-export function renderMarkdown(text) {
-  if (!text) return ''
+// Register only the languages we need (tree-shaking)
+import json from 'highlight.js/lib/languages/json'
+import python from 'highlight.js/lib/languages/python'
+import javascript from 'highlight.js/lib/languages/javascript'
+import typescript from 'highlight.js/lib/languages/typescript'
+import yaml from 'highlight.js/lib/languages/yaml'
+import bash from 'highlight.js/lib/languages/bash'
+import css from 'highlight.js/lib/languages/css'
+import xml from 'highlight.js/lib/languages/xml'
+import markdown from 'highlight.js/lib/languages/markdown'
+import diff from 'highlight.js/lib/languages/diff'
 
-  const lines = text.split('\n')
-  let html = ''
-  let inCodeBlock = false
-  let codeLang = ''
-  let codeLines = []
-  let inTable = false
-  let tableRows = []
-  let listType = null
-  let listItems = []
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('js', javascript)
+hljs.registerLanguage('typescript', typescript)
+hljs.registerLanguage('ts', typescript)
+hljs.registerLanguage('yaml', yaml)
+hljs.registerLanguage('yml', yaml)
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('sh', bash)
+hljs.registerLanguage('shell', bash)
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('html', xml)
+hljs.registerLanguage('markdown', markdown)
+hljs.registerLanguage('md', markdown)
+hljs.registerLanguage('diff', diff)
 
-  function flushList() {
-    if (listItems.length === 0) return ''
-    const tag = listType === 'ol' ? 'ol' : 'ul'
-    const out = `<${tag} class="md-list">${listItems.join('')}</${tag}>`
-    listItems = []
-    listType = null
-    return out
-  }
+const marked = new Marked()
 
-  function flushTable() {
-    if (tableRows.length === 0) return ''
-    let out = '<div class="md-table-wrapper"><table class="md-table"><thead><tr>'
-    const headers = tableRows[0]
-    headers.forEach(h => { out += `<th>${escapeHtml(h.trim())}</th>` })
-    out += '</tr></thead><tbody>'
-    for (let i = 2; i < tableRows.length; i++) {
-      out += '<tr>'
-      tableRows[i].forEach(c => { out += `<td>${inlineMarkdown(c.trim())}</td>` })
-      out += '</tr>'
-    }
-    out += '</tbody></table></div>'
-    tableRows = []
-    inTable = false
-    return out
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Code blocks
-    if (line.trimStart().startsWith('```')) {
-      if (inCodeBlock) {
-        const code = escapeHtml(codeLines.join('\n'))
-        const header = codeLang
-          ? `<div class="code-block-header"><span>${escapeHtml(codeLang)}</span><button class="btn-copy" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('pre').textContent).then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button></div>`
-          : ''
-        html += `<div class="code-block-wrapper">${header}<pre class="code-block">${code}</pre></div>`
-        inCodeBlock = false
-        codeLines = []
-        codeLang = ''
-      } else {
-        html += flushList()
-        html += flushTable()
-        inCodeBlock = true
-        codeLang = line.trimStart().slice(3).trim()
-      }
-      continue
-    }
-    if (inCodeBlock) { codeLines.push(line); continue }
-
-    // Tables
-    if (line.includes('|') && line.trim().startsWith('|')) {
-      const cells = line.split('|').slice(1, -1)
-      if (!inTable) {
-        html += flushList()
-        inTable = true
-        tableRows = [cells]
-      } else {
-        if (cells.every(c => /^[\s:-]+$/.test(c))) {
-          tableRows.push(cells) // separator row
-        } else {
-          tableRows.push(cells)
-        }
-      }
-      continue
-    }
-    if (inTable) { html += flushTable() }
-
-    // Empty line
-    if (line.trim() === '') {
-      html += flushList()
-      html += '<div class="md-spacer"></div>'
-      continue
-    }
-
-    // Headings
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)/)
-    if (headingMatch) {
-      html += flushList()
-      const level = headingMatch[1].length
-      html += `<div class="md-h${level}">${inlineMarkdown(headingMatch[2])}</div>`
-      continue
-    }
-
-    // HR
-    if (/^[-*_]{3,}\s*$/.test(line.trim())) {
-      html += flushList()
-      html += '<hr class="md-hr">'
-      continue
-    }
-
-    // Lists
-    const ulMatch = line.match(/^(\s*)[-*+]\s+(.+)/)
-    const olMatch = line.match(/^(\s*)\d+\.\s+(.+)/)
-    if (ulMatch) {
-      if (listType !== 'ul') { html += flushList(); listType = 'ul' }
-      listItems.push(`<li>${inlineMarkdown(ulMatch[2])}</li>`)
-      continue
-    }
-    if (olMatch) {
-      if (listType !== 'ol') { html += flushList(); listType = 'ol' }
-      listItems.push(`<li>${inlineMarkdown(olMatch[2])}</li>`)
-      continue
-    }
-
-    // Blockquote
-    if (line.trimStart().startsWith('>')) {
-      html += flushList()
-      const content = line.replace(/^>\s?/, '')
-      html += `<div style="border-left:2px solid var(--border-default);padding-left:12px;color:var(--text-secondary);margin:4px 0;">${inlineMarkdown(content)}</div>`
-      continue
-    }
-
-    // Normal paragraph
-    html += flushList()
-    html += `<div>${inlineMarkdown(line)}</div>`
-  }
-
-  // Flush remaining
-  if (inCodeBlock) {
-    html += `<pre class="code-block">${escapeHtml(codeLines.join('\n'))}</pre>`
-  }
-  html += flushList()
-  html += flushTable()
-
-  return html
+/** Escape HTML for safe insertion into attributes/text (fork-local) */
+function escapeForAttr(str) {
+  if (!str) return ''
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
-/** Inline markdown: bold, italic, code, links, strikethrough */
-function inlineMarkdown(text) {
-  let s = escapeHtml(text)
-  // Bold
-  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>')
-  // Italic
-  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>')
-  s = s.replace(/_(.+?)_/g, '<em>$1</em>')
-  // Strikethrough
-  s = s.replace(/~~(.+?)~~/g, '<del>$1</del>')
-  // Code
-  s = s.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-  // Links
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-  // Auto-links
-  s = s.replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
-  return s
+/**
+ * Highlight code with hljs — by language or auto-detect.
+ */
+function highlightCode(code, lang) {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+    } catch (_) { /* fallback */ }
+  }
+  try {
+    return hljs.highlightAuto(code).value
+  } catch (_) {
+    return escapeForAttr(code)
+  }
+}
+
+/**
+ * Detects and strips line numbers from a text block (e.g. from read_file/exec).
+ * Pattern: "1| content" or " 12| content"
+ */
+function preprocessFileContent(text) {
+  if (!text) return ''
+  const lines = text.split('\n')
+  if (lines.length < 1) return text
+
+  const lineNumPattern = /^\s*\d+\| /
+  let matchCount = 0
+  for (const line of lines) {
+    if (lineNumPattern.test(line)) matchCount++
+  }
+
+  // If more than 50% lines follow the pattern, strip prefixes
+  if (matchCount > lines.length * 0.5) {
+    return lines.map(line => line.replace(lineNumPattern, '')).join('\n')
+  }
+  return text
+}
+
+// Custom renderer for code blocks with header + Copy button (fork-local)
+const renderer = {
+  code({ text, lang }) {
+    const highlighted = highlightCode(text, lang)
+    const langLabel = lang ? escapeForAttr(lang) : 'code'
+
+    const copyBtnScript = `navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('pre').textContent).then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='Copy',1500)})`
+
+    return `
+<div class="code-block-wrapper">
+  <div class="code-block-header">
+    <span>${langLabel}</span>
+    <button class="btn-copy" onclick="${escapeForAttr(copyBtnScript)}">Copy</button>
+  </div>
+  <pre class="code-block"><code class="hljs">${highlighted}</code></pre>
+</div>`.trim()
+  }
+}
+
+marked.use({ renderer })
+
+/**
+ * Render markdown text to HTML string.
+ * API-compatible with the legacy renderMarkdown().
+ */
+export function renderMarkdown(text) {
+  if (!text) return ''
+  
+  // 1. Strip line numbers if it's a file dump
+  const cleanText = preprocessFileContent(text)
+  
+  try {
+    // 2. Parse synchronously
+    return marked.parse(cleanText)
+  } catch (err) {
+    console.error('Markdown rendering error:', err)
+    return `<pre class="fallback-pre">${escapeForAttr(text)}</pre>`
+  }
 }

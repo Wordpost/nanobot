@@ -69,7 +69,7 @@ export function MemoryPanel() {
     // MEMORY.md
     return (
       <div class="memory-file-content">
-        <div dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
+        <div class="memory-file-content message-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
       </div>
     )
   }

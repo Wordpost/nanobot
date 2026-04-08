@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@preact/signals": "^2.9.0",
+    "highlight.js": "^11.11.1",
+    "marked": "^15.0.12",
     "preact": "^10.29.0"
   },
   "devDependencies": {

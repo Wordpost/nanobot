@@ -1,0 +1,173 @@
+/* ═══════════════════════════════════════════
+   Highlight.js — Nanobot Dark Theme (fork-local)
+   Material Palenight palette, integrated with
+   viewer design tokens from tokens.css.
+   ═══════════════════════════════════════════ */
+
+/* Base */
+.hljs {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+/* Keywords: if, else, return, import, from, class, def, function, const, let, var */
+.hljs-keyword,
+.hljs-selector-tag {
+  color: #c792ea;
+  font-weight: 500;
+}
+
+/* Strings: "hello", 'world', `template` */
+.hljs-string,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: #c3e88d;
+}
+
+/* Numbers: 42, 3.14, 0xff */
+.hljs-number {
+  color: #f78c6c;
+}
+
+/* Comments: // hi, /* block *\/, # python */
+.hljs-comment,
+.hljs-doctag {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Function names and calls */
+.hljs-title.function_,
+.hljs-title.class_ {
+  color: #82aaff;
+}
+
+/* Generic titles (headings, etc.) */
+.hljs-title {
+  color: var(--accent-blue);
+}
+
+/* Attributes: key= in HTML/XML/JSON */
+.hljs-attr,
+.hljs-attribute {
+  color: var(--accent-orange);
+}
+
+/* Built-in functions: print, len, console */
+.hljs-built_in {
+  color: #ffcb6b;
+}
+
+/* Literals: true, false, null, None, undefined */
+.hljs-literal {
+  color: #ff5370;
+}
+
+/* Types: int, str, Array, Promise */
+.hljs-type,
+.hljs-params {
+  color: #ffcb6b;
+}
+
+/* Meta: #! shebang, @decorator, preprocessor */
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: #89ddff;
+}
+
+/* Regex: /pattern/g */
+.hljs-regexp {
+  color: #89ddff;
+}
+
+/* Symbols and bullets */
+.hljs-symbol,
+.hljs-bullet {
+  color: #f78c6c;
+}
+
+/* Variable: $var, this, self */
+.hljs-variable,
+.hljs-variable.language_ {
+  color: #f07178;
+}
+
+/* Sections and selectors */
+.hljs-section {
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.hljs-selector-class {
+  color: #ffcb6b;
+}
+
+.hljs-selector-id {
+  color: #82aaff;
+}
+
+/* Property names in CSS, JSON key context */
+.hljs-property {
+  color: var(--accent-orange);
+}
+
+/* Punctuation: {}, (), [], ;, : */
+.hljs-punctuation {
+  color: var(--text-secondary);
+}
+
+/* Operators: =, +, -, *, /, ==, => */
+.hljs-operator {
+  color: #89ddff;
+}
+
+/* Links */
+.hljs-link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}
+
+/* Emphasis and strong (markdown) */
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 700;
+}
+
+/* Diff additions and deletions */
+.hljs-addition {
+  color: #c3e88d;
+  background: rgba(195, 232, 141, 0.08);
+  border-left: 2px solid #c3e88d;
+  padding-left: 6px;
+  display: inline-block;
+  width: 100%;
+}
+
+.hljs-deletion {
+  color: #ff5370;
+  background: rgba(255, 83, 112, 0.08);
+  border-left: 2px solid #ff5370;
+  padding-left: 6px;
+  display: inline-block;
+  width: 100%;
+}
+
+/* Quote (doc comments) */
+.hljs-quote {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Subst (interpolation in strings) */
+.hljs-subst {
+  color: var(--text-primary);
+}
+
+/* Name/tag in XML */
+.hljs-name,
+.hljs-tag {
+  color: #f07178;
+}
