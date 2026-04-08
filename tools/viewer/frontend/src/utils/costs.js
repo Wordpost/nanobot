@@ -6,6 +6,9 @@
  * [Input, Output]
  */
 const PRICING = {
+  // gemini-3-flash
+  'gemini-3-flash': [0.5, 3],
+  'gemini-3.1-pro': [2, 12],
   // OpenAI
   'gpt-4o': [5.0, 15.0],
   'gpt-4o-mini': [0.15, 0.6],
@@ -37,7 +40,7 @@ const PRICING = {
  */
 export function calculateCost(usage, model = '') {
   if (!usage) return 0
-  
+
   const slug = (model || '').toLowerCase()
   let [rateIn, rateOut] = PRICING['default']
 
@@ -51,7 +54,7 @@ export function calculateCost(usage, model = '') {
 
   const promptCost = ((usage.prompt_tokens || 0) / 1_000_000) * rateIn
   const completionCost = ((usage.completion_tokens || 0) / 1_000_000) * rateOut
-  
+
   return promptCost + completionCost
 }
 

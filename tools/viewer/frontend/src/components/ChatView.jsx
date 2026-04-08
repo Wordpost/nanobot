@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'preact/hooks'
 import { Message } from './Message.jsx'
 import { EmptyState } from './EmptyState.jsx'
-import { sessionDetail, sessionLoading, activeSession } from '../state/signals.js'
+import { sessionDetail, sessionLoading, activeSession, sessions } from '../state/signals.js'
 import { fetchSessionDetail, deleteSession } from '../state/api.js'
 import { showToast } from './Toast.jsx'
 import { useVirtualList } from '../hooks/useVirtualList.js'
@@ -33,7 +33,18 @@ export function ChatView() {
     }
   }
 
+  // Reload when switching sessions
   useEffect(() => { loadSession() }, [filename])
+
+  // Auto-reload when current session is updated on disk (detected via SSE list refresh)
+  const listMatch = sessions.value.find(s => s.filename === filename)
+  const size_bytes = listMatch?.size_bytes
+  const updated_at = listMatch?.updated_at
+  useEffect(() => {
+    if (filename && !loading) {
+      loadSession()
+    }
+  }, [size_bytes, updated_at])
 
   const meta = detail?.metadata || {}
   const messages = detail?.messages || []

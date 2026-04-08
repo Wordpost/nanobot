@@ -61,6 +61,7 @@ class SessionParser:
         """Convenience method to load everything into a standard structure."""
         metadata = {}
         messages = []
+        all_usages = []
         
         for obj in self.stream_objects():
             if not isinstance(obj, dict):
@@ -71,32 +72,45 @@ class SessionParser:
                 if "messages" in obj:
                     messages.extend(obj["messages"])
             elif obj.get("_type") == "usage":
-                # Dynamically count requests for this turn by inspecting the session graph.
-                # Every LLM request generated an 'assistant' message. We count backward to the 'user' turn.
-                requests_count = 0
-                for m in reversed(messages):
-                    if m.get("role") == "assistant":
-                        requests_count += 1
-                    elif m.get("role") == "user":
-                        break
-
-                # Attach usage to the last assistant message in the list
-                for m in reversed(messages):
-                    if m.get("role") == "assistant":
-                        usage_data = {
-                            k: obj[k] for k in
-                            ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
-                            if k in obj
-                        }
-                        usage_data["requests"] = requests_count
-                        m["usage"] = usage_data
-                        break
+                all_usages.append(obj)
             elif "role" in obj:
                 messages.append(obj)
             elif "messages" in obj:
                 # Full session dump style
                 metadata.update({k: v for k, v in obj.items() if k != "messages"})
                 messages.extend(obj["messages"])
+
+        # Group into turns by "user" role boundary
+        turns = []
+        current_turn_msgs = []
+        for m in messages:
+            if m.get("role") == "user" and current_turn_msgs:
+                turns.append(current_turn_msgs)
+                current_turn_msgs = []
+            current_turn_msgs.append(m)
+        if current_turn_msgs:
+            turns.append(current_turn_msgs)
+            
+        usage_idx = 0
+        for turn_messages in turns:
+            assistant_messages = [m for m in turn_messages if m.get("role") == "assistant"]
+            k = len(assistant_messages)
+            if k == 0:
+                continue
+                
+            turn_usages = all_usages[usage_idx : usage_idx + k]
+            usage_idx += k
+            
+            if turn_usages:
+                aggregated = {
+                    "prompt_tokens": sum(u.get("prompt_tokens", 0) for u in turn_usages),
+                    "completion_tokens": sum(u.get("completion_tokens", 0) for u in turn_usages),
+                    "total_tokens": sum(u.get("total_tokens", 0) for u in turn_usages),
+                    "cached_tokens": sum(u.get("cached_tokens", 0) for u in turn_usages),
+                    "requests": k
+                }
+                last_assistant = assistant_messages[-1]
+                last_assistant["usage"] = aggregated
                 
         return {
             "metadata": metadata,
