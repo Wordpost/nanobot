@@ -52,6 +52,7 @@ export function ChatView() {
   // Virtual List Integration
   const { virtualItems, totalHeight, offsetY } = useVirtualList({
     items: messages,
+    sessionKey: filename,
     containerRef: scrollRef,
     itemHeight: 120, // rough estimate
   })
@@ -102,7 +103,7 @@ export function ChatView() {
         {messages.length === 0
           ? <EmptyState icon="💬" title="Empty session" message="No messages in this session yet" />
           : (
-            <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
+            <div style={{ height: `${totalHeight}px`, position: 'relative', flexShrink: 0 }}>
               <div style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${offsetY}px)` }}>
                 {virtualItems.map(({ item, index, measureRef }) => (
                   <div key={index} ref={measureRef} style={{ display: 'flex', flexDirection: 'column' }}>

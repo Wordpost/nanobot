@@ -8,7 +8,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'preact/hooks'
  * @param {object} options.containerRef - Ref to the scrollable container
  * @param {number} [options.overscan=5] - Number of items to render above and below the visible area
  */
-export function useVirtualList({ items, itemHeight = 100, containerRef, overscan = 5 }) {
+export function useVirtualList({ items, sessionKey, itemHeight = 100, containerRef, overscan = 5 }) {
   const [scrollTop, setScrollTop] = useState(0)
   const [containerHeight, setContainerHeight] = useState(800)
   const itemHeights = useRef({})
@@ -16,9 +16,26 @@ export function useVirtualList({ items, itemHeight = 100, containerRef, overscan
   const [, setTick] = useState(0)
   const forceUpdate = useCallback(() => setTick(t => t + 1), [])
 
+  // Clear cache if session formally changes
+  useEffect(() => {
+    itemHeights.current = {}
+    setScrollTop(0)
+    if (containerRef.current) {
+      containerRef.current.scrollTop = 0
+    }
+  }, [sessionKey])
+
+  // Ensure delayed ref resolution (conditional rendering in parent component)
+  const [containerNode, setContainerNode] = useState(null)
+  useEffect(() => {
+    if (containerRef.current && containerRef.current !== containerNode) {
+      setContainerNode(containerRef.current)
+    }
+  })
+
   // Monitor container scroll and resize
   useEffect(() => {
-    const container = containerRef.current
+    const container = containerNode
     if (!container) return
     
     const handleScroll = () => {
@@ -41,7 +58,7 @@ export function useVirtualList({ items, itemHeight = 100, containerRef, overscan
       container.removeEventListener('scroll', handleScroll)
       observer.disconnect()
     }
-  }, [containerRef])
+  }, [containerNode])
 
   const setItemHeight = useCallback((index, height) => {
     if (Math.abs((itemHeights.current[index] || 0) - height) > 2) {
@@ -59,14 +76,20 @@ export function useVirtualList({ items, itemHeight = 100, containerRef, overscan
 
     let total = 0
     let start = 0
+    let foundStart = false
     
     // Find start index
     for (let i = 0; i < items.length; i++) {
       const h = itemHeights.current[i] || itemHeight
-      if (total + h > scrollTop && start === 0) {
+      if (total + h > scrollTop && !foundStart) {
         start = i
+        foundStart = true
       }
       total += h
+    }
+
+    if (!foundStart && items.length > 0) {
+      start = items.length - 1
     }
     
     let end = start

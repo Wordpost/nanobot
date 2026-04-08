@@ -13,50 +13,20 @@ class SessionParser:
         self.chunk_size = chunk_size
 
     def stream_objects(self) -> Generator[Dict[str, Any], None, None]:
-        """Generator that yields top-level JSON objects from the file."""
+        """Generator that yields top-level JSON objects from the file line-by-line."""
         if not self.filepath.exists():
             return
 
         with open(self.filepath, "r", encoding="utf-8") as f:
-            buffer = ""
-            depth = 0
-            start_index = -1
-            
-            while True:
-                chunk = f.read(self.chunk_size)
-                if not chunk:
-                    break
-                
-                # Append chunk to memory and scan for objects
-                for i, char in enumerate(chunk):
-                    if char == '{':
-                        if depth == 0:
-                            start_index = len(buffer) + i
-                        depth += 1
-                    elif char == '}':
-                        depth -= 1
-                        if depth == 0 and start_index != -1:
-                            # Full object captured
-                            full_text = buffer + chunk
-                            end_index = i + 1
-                            obj_str = full_text[start_index:len(buffer) + end_index]
-                            
-                            try:
-                                yield json.loads(obj_str)
-                            except json.JSONDecodeError as e:
-                                logger.error(f"Failed to parse object: {e}")
-                            
-                            start_index = -1
-
-                # Update buffer and adjust start_index if we are mid-object
-                buffer += chunk
-                if start_index == -1:
-                    buffer = "" # Object finished, clear buffer
-                else:
-                    # Keep everything from start_index onwards
-                    buffer = buffer[start_index:]
-                    start_index = 0
-
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse line in {self.filepath.name}: {e}")
+                    
     def load_full(self) -> Dict[str, Any]:
         """Convenience method to load everything into a standard structure."""
         metadata = {}

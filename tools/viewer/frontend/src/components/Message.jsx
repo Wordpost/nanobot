@@ -24,6 +24,7 @@ export function Message({ msg, index, onRefresh }) {
 
   // Extract <think> blocks
   const { clean, thinks } = extractThinkBlocks(content)
+  const reasoningContent = msg.reasoning_content || msg.reasoning;
 
   async function handleDelete() {
     if (!confirm('Delete this message?')) return
@@ -60,15 +61,20 @@ export function Message({ msg, index, onRefresh }) {
       </div>
 
       {/* Thinking toggle */}
-      {thinks.length > 0 && (
+      {(thinks.length > 0 || reasoningContent) && (
         <div>
           <div class="reasoning-toggle" onClick={() => setThinkOpen(!thinkOpen)}>
-            🧠 Reasoning ({thinks.length})
+            🧠 Reasoning {thinks.length > 0 ? `(${thinks.length})` : ''}
             <span class={`chevron ${thinkOpen ? 'open' : ''}`}>▼</span>
           </div>
-          {thinkOpen && thinks.map((t, i) => (
-            <div key={i} class="reasoning-block">{t}</div>
-          ))}
+          {thinkOpen && (
+            <>
+              {reasoningContent && <div class="reasoning-block"><Markdown text={reasoningContent} /></div>}
+              {thinks.map((t, i) => (
+                <div key={i} class="reasoning-block"><Markdown text={t} /></div>
+              ))}
+            </>
+          )}
         </div>
       )}
 
