@@ -1328,6 +1328,51 @@ em {
   background: var(--bg-hover);
 }
 
+.iter-usage-badge {
+  font-size: var(--fs-9);
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-muted);
+  font-family: var(--font-mono);
+  font-weight: normal;
+}
+
+.subagent-summary-stats {
+  margin-bottom: var(--sp-10);
+  padding: var(--sp-6) var(--sp-10);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+}
+
+.usage-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-10);
+}
+
+.usage-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  font-size: var(--fs-10);
+}
+
+.usage-item .label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.usage-item .value {
+  color: var(--accent-orange);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
 .subagent-iter-body {
   padding: var(--sp-8);
 }

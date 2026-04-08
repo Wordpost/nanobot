@@ -7,6 +7,7 @@ import { useSSE } from '../hooks/useSSE.js'
 import { AgentSelector } from './AgentSelector.jsx'
 import { Markdown } from './Markdown.jsx'
 import { showToast } from './Toast.jsx'
+import { formatTokens, formatDate } from '../utils/format.js'
 
 export function SubagentPanel() {
   const [agent, setAgent] = useState(null)
@@ -83,6 +84,16 @@ export function SubagentPanel() {
             : (
               <div>
                 <h3 style="color:var(--accent-orange);margin-bottom:12px">{detail.label || detail.filename}</h3>
+                <div class="subagent-summary-stats">
+                  {detail.usage && (
+                    <div class="usage-grid">
+                      <div class="usage-item"><span class="label">Tokens:</span> <span class="value">{formatTokens(detail.usage.total_tokens)}</span></div>
+                      {detail.usage.cached_tokens > 0 && <div class="usage-item"><span class="label">Cached:</span> <span class="value">{formatTokens(detail.usage.cached_tokens)}</span></div>}
+                      <div class="usage-item"><span class="label">Requests:</span> <span class="value">{detail.usage.requests}</span></div>
+                      <div class="usage-item"><span class="label">Time:</span> <span class="value">{detail.duration || 'n/a'}</span></div>
+                    </div>
+                  )}
+                </div>
                 {detail.task && <div class="subagent-task-desc">{detail.task}</div>}
                 {detail.iterations?.map((iter, i) => (
                   <SubagentIteration key={i} iter={iter} index={i} />
@@ -109,8 +120,15 @@ function SubagentIteration({ iter, index }) {
   return (
     <div class="subagent-iteration">
       <div class="subagent-iter-header" onClick={() => setOpen(!open)}>
-        <span class={`chevron ${open ? 'open' : ''}`}>▶</span>
-        <span>Iteration {index + 1}</span>
+        <div style="display:flex;align-items:center;gap:8px;flex:1">
+          <span class={`chevron ${open ? 'open' : ''}`}>▶</span>
+          <span>Iteration {index + 1}</span>
+        </div>
+        {iter.usage && (
+          <div class="iter-usage-badge">
+            {formatTokens(iter.usage.total_tokens)} tokens
+          </div>
+        )}
       </div>
       {open && (
         <div class="subagent-iter-body">
