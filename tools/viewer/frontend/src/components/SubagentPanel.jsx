@@ -126,6 +126,9 @@ function SubagentIteration({ iter, index }) {
 
 function SubagentToolCall({ tc }) {
   const [open, setOpen] = useState(false)
+  const input = tc.arguments || tc.input
+  const output = tc.result || tc.output
+
   return (
     <div class="subagent-tc">
       <div class="subagent-tc-name" onClick={() => setOpen(!open)}>
@@ -134,8 +137,20 @@ function SubagentToolCall({ tc }) {
       </div>
       {open && (
         <div class="subagent-tc-detail">
-          {tc.input && <><div class="subagent-tc-label">Input</div><pre>{typeof tc.input === 'string' ? tc.input : JSON.stringify(tc.input, null, 2)}</pre></>}
-          {tc.output && <><div class="subagent-tc-label">Output</div><pre>{typeof tc.output === 'string' ? tc.output : JSON.stringify(tc.output, null, 2)}</pre></>}
+          {input && (
+            <>
+              <div class="subagent-tc-label">Input</div>
+              <pre class="subagent-raw-input">{typeof input === 'string' ? input : JSON.stringify(input, null, 2)}</pre>
+            </>
+          )}
+          {output && (
+            <>
+              <div class="subagent-tc-label">Result</div>
+              <div class="message-content subagent-md-output">
+                <Markdown text={typeof output === 'string' ? output : JSON.stringify(output, null, 2)} />
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
