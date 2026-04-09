@@ -405,8 +405,12 @@ class AgentLoop:
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Process a message: per-session serial, cross-session concurrent."""
-        if self._unified_session and not msg.session_key_override:
-            msg = dataclasses.replace(msg, session_key_override=UNIFIED_SESSION_KEY)
+        if not msg.session_key_override: # (fork-local) changed:
+            if self._unified_session:
+                msg = dataclasses.replace(msg, session_key_override=UNIFIED_SESSION_KEY)
+            elif msg.channel == "system":
+                msg = dataclasses.replace(msg, session_key_override=msg.chat_id)
+                
         lock = self._session_locks.setdefault(msg.session_key, asyncio.Lock())
         gate = self._concurrency_gate or nullcontext()
         async with lock, gate:
@@ -508,7 +512,7 @@ class AgentLoop:
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             self._usage_hook.bind_session(session)  # (fork-local)
             history = session.get_history(max_messages=0)
-            current_role = "assistant" if msg.sender_id == "subagent" else "user"
+            current_role = "user" # (fork-local) change to "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
