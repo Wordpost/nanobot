@@ -1,9 +1,9 @@
-"""Handoff tool for inter-agent task delegation across containers (fork-local).
+"""Handoff tool for inter-agent communication across containers (fork-local).
 
-Enables agents running in separate Docker containers to communicate via HTTP
-webhooks.  Each agent maintains its own isolated context; the handoff tool
-provides the bridge by POSTing structured payloads to a peer's WebhookChannel
-endpoint.
+Enables agents running in separate Docker containers to exchange information
+via synchronous HTTP requests.  Each agent maintains its own isolated context;
+the handoff tool provides the bridge by POSTing structured payloads to a peer's
+WebhookChannel endpoint and **waiting** for the response.
 
 Configuration lives in ``workspace/swarm.json`` (never in core config.json).
 
@@ -21,6 +21,7 @@ unless explicitly overridden.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -31,37 +32,20 @@ import aiohttp
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
-from nanobot.utils.path import abbreviate_path
 
 
 class HandoffTool(Tool):
-    """Tool to hand off tasks to peer agents in the swarm (fork-local)."""
+    """Synchronous tool to exchange information with peer agents (fork-local)."""
 
     _SWARM_CONFIG_FILE = "swarm.json"
     _DEFAULT_PORT = 1987
     _DEFAULT_SLOT_PATH = "/webhook/swarm"
+    _TIMEOUT_SECONDS = 120
 
     def __init__(self, workspace: Path) -> None:
         self._workspace = workspace
         self._config = self._load_config()
         self._peers = self._normalize_peers()
-        self._origin_channel = "cli"
-        self._origin_chat_id = "direct"
-        # Swarm context inherited from incoming swarm messages
-        self._swarm_ctx: dict[str, Any] = {}
-
-    # ------------------------------------------------------------------
-    # Context management
-    # ------------------------------------------------------------------
-
-    def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the origin channel/chat for human-facing callbacks."""
-        self._origin_channel = channel
-        self._origin_chat_id = chat_id
-
-    def set_swarm_context(self, metadata: dict[str, Any]) -> None:
-        """Inject incoming swarm metadata so outgoing handoffs preserve the chain."""
-        self._swarm_ctx = metadata if metadata.get("_swarm") else {}
 
     # ------------------------------------------------------------------
     # Tool interface
@@ -76,13 +60,9 @@ class HandoffTool(Tool):
         peers = list(self._peers.keys())
         peer_list = ", ".join(peers) if peers else "none configured"
         return (
-            "Delegate sub-tasks to specialist peer agents in the swarm. "
-            "Use ONLY for dispatching NEW tasks to peers. "
-            "Do NOT use this tool to return or relay results — results are "
-            "delivered automatically via the transport layer. "
-            "When you receive a swarm task, just answer with plain text; "
-            "the system will route your answer back to the caller. "
-            f"Available target peers: [{peer_list}]. "
+            "Send a message or task to a peer agent and get their response. "
+            "Use context_id to continue a previous conversation with the same peer. "
+            f"Available peers: [{peer_list}]."
         )
 
     @property
@@ -97,7 +77,7 @@ class HandoffTool(Tool):
                 },
                 "task": {
                     "type": "string",
-                    "description": "Task description for the target agent",
+                    "description": "Task or message for the peer agent",
                 },
                 "data": {
                     "type": "string",
@@ -106,10 +86,11 @@ class HandoffTool(Tool):
                         "Use for contacts, code, reports, etc."
                     ),
                 },
-                "type": {
+                "context_id": {
                     "type": "string",
                     "description": (
-                        "Message type: 'task' (default), 'result', or 'notification'"
+                        "Optional. Pass the context ID from a previous handoff "
+                        "to continue the same conversation with the peer."
                     ),
                 },
             },
@@ -121,10 +102,10 @@ class HandoffTool(Tool):
         target: str,
         task: str,
         data: str = "",
-        type: str = "task",
+        context_id: str = "",
         **kwargs: Any,
     ) -> str:
-        """Execute handoff: POST payload to target agent's webhook."""
+        """Send task to peer agent and WAIT for their response (fork-local)."""
         if target not in self._peers:
             available = list(self._peers.keys())
             return (
@@ -136,57 +117,16 @@ class HandoffTool(Tool):
         url = peer["url"]
         token = peer["token"]
 
-        # ---- Anti-loop protection ----
-        hop_count = self._swarm_ctx.get("_hop_count", 0) + 1
-        max_hops = self._config.get("max_hops", 5)
-
-        if hop_count > max_hops:
-            logger.warning(
-                "Swarm anti-loop: hop_count {} exceeds max_hops {} for chain {}",
-                hop_count, max_hops, self._swarm_ctx.get("_chain_id", "?"),
-            )
-            return (
-                f"Error: Maximum chain depth ({max_hops}) reached. "
-                "Cannot hand off — summarize results and report to the user instead."
-            )
-
-        # Prevent ping-pong: block handoff back to the agent that sent
-        # the current swarm task.  Results flow back automatically via
-        # the WebhookChannel callback mechanism.  (fork-local)
-        origin_agent = self._swarm_ctx.get("_origin", {}).get("agent", "")
-        if origin_agent and target == origin_agent:
-            logger.info(
-                "Swarm anti-loop: blocked handoff back to origin '{}' "
-                "(chain={}). Result delivered automatically.",
-                origin_agent, self._swarm_ctx.get("_chain_id", "?"),
-            )
-            return (
-                "Results are delivered automatically — do NOT use handoff "
-                "to reply to the calling agent. Just respond with plain text "
-                "and the system will route your answer back."
-            )
-
-        # ---- Build payload ----
-        chain_id = self._swarm_ctx.get("_chain_id") or uuid.uuid4().hex[:8]
+        ctx_id = context_id or uuid.uuid4().hex[:8]
         identity = self._get_identity()
 
         payload: dict[str, Any] = {
             "task": task,
             "data": data,
-            "origin": {
-                "agent": identity,
-                "url": self._build_self_url(),
-            },
-            "chain_id": chain_id,
-            "hop_count": hop_count,
-            "human": self._swarm_ctx.get("_human") or {
-                "channel": self._origin_channel,
-                "chat_id": self._origin_chat_id,
-            },
-            "type": type,
+            "context_id": ctx_id,
+            "origin": {"agent": identity},
         }
 
-        # ---- Send ----
         try:
             async with aiohttp.ClientSession() as session:
                 headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -194,27 +134,36 @@ class HandoffTool(Tool):
                     headers["Authorization"] = f"Bearer {token}"
 
                 async with session.post(
-                    url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15),
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=self._TIMEOUT_SECONDS),
                 ) as resp:
-                    if resp.status == 200:
-                        self._log_handoff(chain_id, target, hop_count, type)
-                        return (
-                            f"✓ Task handed off (chain: {chain_id}, hop: {hop_count}/{max_hops}). "
-                            "Processing asynchronously, result will arrive automatically. "
-                            "Do NOT guess or fabricate the result."
-                        )
-                    body_text = await resp.text()
-                    logger.error(
-                        "Handoff to '{}' ({}) failed: HTTP {} — {}",
-                        target, abbreviate_path(url, 50), resp.status, body_text[:200],
-                    )
-                    return f"Error: Handoff to '{target}' failed (HTTP {resp.status})"
+                    body = await resp.json()
 
+                    if resp.status == 200 and body.get("status") == "completed":
+                        result = body.get("result", "")
+                        self._log_handoff(ctx_id, target, "completed")
+                        return (
+                            f"Response from {target} (context: {ctx_id}):\n"
+                            f"{result}"
+                        )
+                    else:
+                        error = body.get("error", f"HTTP {resp.status}")
+                        self._log_handoff(ctx_id, target, "error")
+                        return f"Error from {target}: {error}"
+
+        except asyncio.TimeoutError:
+            self._log_handoff(ctx_id, target, "timeout")
+            return (
+                f"Error: {target} did not respond within "
+                f"{self._TIMEOUT_SECONDS} seconds."
+            )
         except aiohttp.ClientError as exc:
-            logger.error("Handoff connection error to '{}' ({}): {}", target, abbreviate_path(url, 50), exc)
+            logger.error("Handoff connection error to '{}': {}", target, exc)
             return f"Error: Could not connect to '{target}' — {exc}"
         except Exception as exc:
-            logger.error("Handoff unexpected error to '{}' ({}): {}", target, abbreviate_path(url, 50), exc)
+            logger.error("Handoff unexpected error to '{}': {}", target, exc)
             return f"Error: Unexpected error during handoff — {exc}"
 
     # ------------------------------------------------------------------
@@ -230,16 +179,6 @@ class HandoffTool(Tool):
         if explicit:
             return explicit
         return os.environ.get("HOSTNAME", "unknown-agent")
-
-    def _build_self_url(self) -> str:
-        """Construct this agent's own webhook URL for callbacks (fork-local)."""
-        explicit = self._config.get("self_url")
-        if explicit:
-            return explicit
-
-        port = self._config.get("port", self._DEFAULT_PORT)
-        host = self._get_identity()
-        return f"http://{host}:{port}{self._DEFAULT_SLOT_PATH}"
 
     def _build_peer_url(self, peer_name: str) -> str:
         """Construct a peer's webhook URL using convention.
@@ -272,13 +211,11 @@ class HandoffTool(Tool):
 
         for name, value in raw_peers.items():
             if isinstance(value, str):
-                # Short format: value is the token
                 normalized[name] = {
                     "token": value,
                     "url": self._build_peer_url(name),
                 }
             elif isinstance(value, dict):
-                # Full format: object with explicit fields
                 token = value.get("token", "")
                 url = value.get("url") or self._build_peer_url(name)
                 normalized[name] = {"token": token, "url": url}
@@ -305,24 +242,22 @@ class HandoffTool(Tool):
 
     def _log_handoff(
         self,
-        chain_id: str,
+        context_id: str,
         target: str,
-        hop_count: int,
-        msg_type: str,
+        status: str,
     ) -> None:
-        """Log handoff event to workspace/swarm/chains/{chain_id}.jsonl."""
+        """Log handoff event to workspace/swarm/chains/{context_id}.jsonl."""
         from datetime import datetime
 
         log_dir = self._workspace / "swarm" / "chains"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"{chain_id}.jsonl"
+        log_file = log_dir / f"{context_id}.jsonl"
 
         entry = {
             "timestamp": datetime.now().isoformat(),
             "from": self._get_identity(),
             "to": target,
-            "hop": hop_count,
-            "type": msg_type,
+            "status": status,
         }
         try:
             with open(log_file, "a", encoding="utf-8") as f:

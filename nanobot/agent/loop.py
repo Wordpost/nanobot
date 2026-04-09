@@ -285,7 +285,7 @@ class AgentLoop:
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron", "handoff"):  # (fork-local) +handoff
+        for name in ("message", "spawn", "cron"):  # (fork-local)
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
@@ -465,6 +465,7 @@ class AgentLoop:
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
                     content="Sorry, I encountered an error.",
+                    metadata=msg.metadata or {}, # (fork-local)
                 ))
 
     async def close_mcp(self) -> None:
@@ -547,10 +548,6 @@ class AgentLoop:
 
         self._usage_hook.bind_session(session)  # (fork-local)
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
-        # (fork-local) Propagate swarm chain metadata to HandoffTool
-        if msg.metadata.get("_swarm"):
-            if (ht := self.tools.get("handoff")) and hasattr(ht, "set_swarm_context"):
-                ht.set_swarm_context(msg.metadata)
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
