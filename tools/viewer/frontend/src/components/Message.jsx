@@ -5,7 +5,7 @@ import { Markdown } from './Markdown.jsx'
 import { ToolCall } from './ToolCall.jsx'
 import { SubagentCard } from './SubagentCard.jsx'
 import { UsageBadge } from './UsageBadge.jsx'
-import { extractThinkBlocks } from '../utils/format.js'
+import { extractThinkBlocks, formatTime } from '../utils/format.js'
 import { deleteMessages } from '../state/api.js'
 import { activeSession, sessionDetail } from '../state/signals.js'
 import { showToast } from './Toast.jsx'
@@ -55,7 +55,7 @@ export function Message({ msg, index, onRefresh }) {
           {msg.tool_name && <span class="tool-name-badge">{msg.tool_name}</span>}
         </span>
         <div class="message-header-right">
-          {msg.timestamp && <span class="message-time">{new Date(msg.timestamp).toLocaleTimeString('ru-RU')}</span>}
+          {msg.timestamp && <span class="message-time">{formatTime(msg.timestamp)}</span>}
           <button class="btn-delete-msg" onClick={handleDelete} title="Delete message">✕</button>
         </div>
       </div>

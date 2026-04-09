@@ -5,7 +5,7 @@ import { activePanel, panelExpanded, poolMode } from '../state/signals.js'
 import { fetchMemory, clearMemory } from '../state/api.js'
 import { AgentSelector } from './AgentSelector.jsx'
 import { Markdown } from './Markdown.jsx'
-import { formatSize } from '../utils/format.js'
+import { formatSize, formatDate } from '../utils/format.js'
 import { showToast } from './Toast.jsx'
 import { renderMarkdown } from '../utils/markdown.js'
 
@@ -57,7 +57,7 @@ export function MemoryPanel() {
         <div class="memory-file-content">
           {entries.map((entry, i) => (
             <div key={i} style="margin-bottom:12px;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-sm)">
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">{entry.timestamp || `#${i + 1}`}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">{entry.timestamp ? formatDate(entry.timestamp) : `#${i + 1}`}</div>
               <div style="font-size:13px;color:var(--text-primary)">{entry.role}: {typeof entry.content === 'string' ? entry.content.slice(0, 500) : JSON.stringify(entry.content).slice(0, 500)}</div>
             </div>
           ))}

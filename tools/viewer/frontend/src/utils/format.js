@@ -1,13 +1,31 @@
 /** @module utils/format — Formatting helpers (fork-local) */
 
+export function fixTimezone(isoStr) {
+  if (!isoStr) return ''
+  let str = String(isoStr)
+  // If naive ISO 8601 (no Z and no time zone offset), assume it's UTC and append Z.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(str)) {
+    str += 'Z'
+  }
+  return str
+}
+
 export function formatDate(isoStr) {
   if (!isoStr) return ''
   try {
-    const d = new Date(isoStr)
+    const d = new Date(fixTimezone(isoStr))
     return d.toLocaleString('ru-RU', {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
     })
+  } catch { return isoStr }
+}
+
+export function formatTime(isoStr) {
+  if (!isoStr) return ''
+  try {
+    const d = new Date(fixTimezone(isoStr))
+    return d.toLocaleTimeString('ru-RU')
   } catch { return isoStr }
 }
 
