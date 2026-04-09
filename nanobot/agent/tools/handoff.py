@@ -1,9 +1,9 @@
-"""Handoff tool for inter-agent communication across containers (fork-local).
+"""Handoff tool for inter-agent communication via WebSocket (fork-local).
 
 Enables agents running in separate Docker containers to exchange information
-via synchronous HTTP requests.  Each agent maintains its own isolated context;
-the handoff tool provides the bridge by POSTing structured payloads to a peer's
-WebhookChannel endpoint and **waiting** for the response.
+via streaming WebSocket connections.  Each agent maintains its own isolated
+context; the handoff tool provides the bridge by connecting to a peer's
+SwarmWSChannel endpoint and **listening** for delta/progress/message events.
 
 Configuration lives in ``workspace/swarm.json`` (never in core config.json).
 
@@ -15,7 +15,7 @@ Minimal config example::
         }
     }
 
-The peer URL is auto-resolved as ``http://{peer_name}:{port}/webhook/swarm``
+The peer URL is auto-resolved as ``ws://{peer_name}:{port}/swarm``
 unless explicitly overridden.
 """
 
@@ -24,28 +24,42 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-import aiohttp
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
+from nanobot.bus.events import OutboundMessage
+from nanobot.bus.queue import MessageBus
 
 
 class HandoffTool(Tool):
-    """Synchronous tool to exchange information with peer agents (fork-local)."""
+    """Streaming tool to exchange information with peer agents via WebSocket (fork-local)."""
 
     _SWARM_CONFIG_FILE = "swarm.json"
-    _DEFAULT_PORT = 1987
-    _DEFAULT_SLOT_PATH = "/webhook/swarm"
-    _TIMEOUT_SECONDS = 120
+    _DEFAULT_PORT = 1988
+    _DEFAULT_SLOT_PATH = "/swarm"
+    _IDLE_TIMEOUT = 300  # seconds without any event → peer considered dead
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, bus: MessageBus) -> None:
         self._workspace = workspace
+        self._bus = bus
         self._config = self._load_config()
         self._peers = self._normalize_peers()
+        self._origin_channel = "cli"
+        self._origin_chat_id = "direct"
+
+    # ------------------------------------------------------------------
+    # Context for UI forwarding (set by AgentLoop._set_tool_context)
+    # ------------------------------------------------------------------
+
+    def set_context(self, channel: str, chat_id: str) -> None:
+        """Set the origin context for forwarding peer delta/progress to user."""
+        self._origin_channel = channel
+        self._origin_chat_id = chat_id
 
     # ------------------------------------------------------------------
     # Tool interface
@@ -105,7 +119,7 @@ class HandoffTool(Tool):
         context_id: str = "",
         **kwargs: Any,
     ) -> str:
-        """Send task to peer agent and WAIT for their response (fork-local)."""
+        """Connect to peer agent via WebSocket, stream events, return result (fork-local)."""
         if target not in self._peers:
             available = list(self._peers.keys())
             return (
@@ -120,51 +134,102 @@ class HandoffTool(Tool):
         ctx_id = context_id or uuid.uuid4().hex[:8]
         identity = self._get_identity()
 
-        payload: dict[str, Any] = {
+        # Build WS URL with token
+        separator = "&" if "?" in url else "?"
+        ws_url = f"{url}{separator}token={token}"
+
+        payload = json.dumps({
             "task": task,
             "data": data,
             "context_id": ctx_id,
             "origin": {"agent": identity},
-        }
+        }, ensure_ascii=False)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                headers: dict[str, str] = {"Content-Type": "application/json"}
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
+            import websockets
 
-                async with session.post(
-                    url,
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self._TIMEOUT_SECONDS),
-                ) as resp:
-                    body = await resp.json()
+            async with websockets.connect(
+                ws_url,
+                max_size=4_194_304,
+                ping_interval=30.0,
+                ping_timeout=30.0,
+            ) as ws:
+                # Send task
+                await ws.send(payload)
 
-                    if resp.status == 200 and body.get("status") == "completed":
-                        result = body.get("result", "")
+                # Listen for events
+                last_activity = time.monotonic()
+
+                async for raw in ws:
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+
+                    last_activity = time.monotonic()
+
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.warning("[handoff] non-JSON frame from {}: {}", target, raw[:100])
+                        continue
+
+                    event = msg.get("event", "")
+
+                    if event == "accepted":
+                        logger.info("[handoff] accepted by {} (ctx={})", target, ctx_id)
+
+                    elif event == "delta":
+                        await self._forward_progress(msg.get("text", ""), tool_hint=False)
+
+                    elif event == "progress":
+                        await self._forward_progress(msg.get("text", ""), tool_hint=True)
+
+                    elif event == "message":
+                        result = msg.get("text", "")
                         self._log_handoff(ctx_id, target, "completed")
                         return (
                             f"Response from {target} (context: {ctx_id}):\n"
                             f"{result}"
                         )
-                    else:
-                        error = body.get("error", f"HTTP {resp.status}")
+
+                    elif event == "error":
                         self._log_handoff(ctx_id, target, "error")
-                        return f"Error from {target}: {error}"
+                        return f"Error from {target}: {msg.get('text', 'unknown error')}"
+
+                    # Check idle timeout
+                    if time.monotonic() - last_activity > self._IDLE_TIMEOUT:
+                        self._log_handoff(ctx_id, target, "idle_timeout")
+                        return (
+                            f"Error: {target} stopped sending events after "
+                            f"{self._IDLE_TIMEOUT} seconds of inactivity."
+                        )
+
+                # Connection closed without a "message" event
+                self._log_handoff(ctx_id, target, "closed_without_result")
+                return f"Error: {target} closed connection without sending a result."
 
         except asyncio.TimeoutError:
             self._log_handoff(ctx_id, target, "timeout")
-            return (
-                f"Error: {target} did not respond within "
-                f"{self._TIMEOUT_SECONDS} seconds."
-            )
-        except aiohttp.ClientError as exc:
-            logger.error("Handoff connection error to '{}': {}", target, exc)
-            return f"Error: Could not connect to '{target}' — {exc}"
+            return f"Error: Connection to {target} timed out."
         except Exception as exc:
-            logger.error("Handoff unexpected error to '{}': {}", target, exc)
-            return f"Error: Unexpected error during handoff — {exc}"
+            logger.error("Handoff WS error to '{}': {}", target, exc)
+            self._log_handoff(ctx_id, target, "error")
+            return f"Error: Could not connect to '{target}' — {exc}"
+
+    # ------------------------------------------------------------------
+    # UI forwarding
+    # ------------------------------------------------------------------
+
+    async def _forward_progress(self, text: str, *, tool_hint: bool = False) -> None:
+        """Forward peer's delta/progress to the calling user's channel via bus."""
+        if not self._bus or not text.strip():
+            return
+        meta: dict[str, Any] = {"_progress": True, "_tool_hint": tool_hint}
+        await self._bus.publish_outbound(OutboundMessage(
+            channel=self._origin_channel,
+            chat_id=self._origin_chat_id,
+            content=text,
+            metadata=meta,
+        ))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -181,15 +246,15 @@ class HandoffTool(Tool):
         return os.environ.get("HOSTNAME", "unknown-agent")
 
     def _build_peer_url(self, peer_name: str) -> str:
-        """Construct a peer's webhook URL using convention.
+        """Construct a peer's WebSocket URL using convention.
 
         Uses ``url_template`` from config if available, otherwise defaults to
-        ``http://{target}:{port}/webhook/swarm``.
+        ``ws://{target}:{port}/swarm``.
         """
         port = self._config.get("port", self._DEFAULT_PORT)
         template = self._config.get(
             "url_template",
-            f"http://{{target}}:{port}{self._DEFAULT_SLOT_PATH}",
+            f"ws://{{target}}:{port}{self._DEFAULT_SLOT_PATH}",
         )
         return template.replace("{target}", peer_name)
 
@@ -202,7 +267,7 @@ class HandoffTool(Tool):
             "peers": { "aggregator": "secret-token" }
 
             # Full: object with token and optional url
-            "peers": { "aggregator": { "token": "secret-token", "url": "http://..." } }
+            "peers": { "aggregator": { "token": "secret-token", "url": "ws://..." } }
 
         Returns a dict of ``{ name: { "token": str, "url": str } }``.
         """

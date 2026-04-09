@@ -1,13 +1,16 @@
 """Webhook channel with slot-based routing (fork-local).
 
 Each *slot* is a named webhook receiver with its own:
-- HTTP path (e.g. ``/webhook/swarm``, ``/webhook/crm``)
+- HTTP path (e.g. ``/webhook/crm``, ``/webhook/threads``)
 - Bearer token for authentication
-- Handler type (``standard``, ``swarm``, ``raw``)
+- Handler type (``standard`` or ``raw``)
 - Mapping templates for payload extraction
 - Optional fixed session key
 
 Slots are configured in ``channels.webhook.slots`` in ``config.json``.
+
+Note: Inter-agent Swarm communication has been moved to ``SwarmWSChannel``
+(see ``swarm_ws.py``).  This channel now handles only external HTTP webhooks.
 """
 
 import asyncio
@@ -40,7 +43,7 @@ class WebhookSlot:
     __slots__ = ("name", "path", "token", "handler", "mappings", "session_key", "allow_from")
 
     # Built-in handler types that auto-resolve from slot name
-    _BUILTIN_HANDLERS = frozenset({"swarm", "raw"})
+    _BUILTIN_HANDLERS = frozenset({"raw"})
 
     def __init__(self, name: str, cfg: dict[str, Any]) -> None:
         self.name = name
@@ -73,8 +76,6 @@ class WebhookChannel(BaseChannel):
         self._stop_event = asyncio.Event()
         self._slots: dict[str, WebhookSlot] = {}  # path → slot
         self._session_mgr: SessionManager | None = None  # (fork-local) lazy init
-        # (fork-local) Pending synchronous swarm requests: {request_id → Future}
-        self._pending_requests: dict[str, asyncio.Future[str]] = {}
         self._build_slots()
 
     # ------------------------------------------------------------------ #
@@ -187,29 +188,8 @@ class WebhookChannel(BaseChannel):
         self._stop_event.set()
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Deliver outbound — resolve sync Future or log (fork-local).
-
-        Swarm messages are processed synchronously: the HTTP handler waits
-        for the AgentLoop response via an ``asyncio.Future``.  When the
-        outbound response arrives here, we resolve that Future so the
-        HTTP response can be returned to the caller.
-
-        Progress messages (tool hints, streaming chunks) are suppressed
-        for swarm sessions — only the final response resolves the Future.
-        """
-        meta = msg.metadata or {}
-        request_id = meta.get("_request_id")
-
-        if request_id and request_id in self._pending_requests:
-            # Swarm sync response — resolve the waiting Future
-            if not meta.get("_progress"):
-                future = self._pending_requests[request_id]
-                if not future.done():
-                    future.set_result(msg.content)
-            return  # Suppress ALL outbound for pending sync requests
-
-        # Non-swarm: just log
-        logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
+        """Log outbound message (fork-local)."""
+        logger.info("[webhook] -> {}: {}", msg.chat_id, (msg.content or "")[:80])
 
     # ------------------------------------------------------------------ #
     # Request handling — slot dispatcher                                  #
@@ -237,9 +217,7 @@ class WebhookChannel(BaseChannel):
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         # Dispatch by handler type
-        if slot.handler == "swarm":
-            return await self._handle_swarm(slot, body)
-        elif slot.handler == "raw":
+        if slot.handler == "raw":
             return await self._handle_raw(slot, body)
         else:
             return await self._handle_standard(slot, body)
@@ -298,89 +276,6 @@ class WebhookChannel(BaseChannel):
         )
         return web.json_response({"ok": True, "slot": slot.name, "sender_id": sender})
 
-    # ------------------------------------------------------------------ #
-    # Handler: swarm (synchronous inter-agent communication, fork-local)  #
-    # ------------------------------------------------------------------ #
-
-    async def _handle_swarm(self, slot: WebhookSlot, body: dict) -> web.Response:
-        """Process swarm task synchronously — wait for AgentLoop response (fork-local).
-
-        The calling agent's HandoffTool holds the HTTP connection open while
-        we process the task.  Flow:
-
-        1. Parse payload, create ``asyncio.Future`` keyed by ``request_id``.
-        2. Publish ``InboundMessage`` to the bus (normal AgentLoop path).
-        3. AgentLoop processes → publishes ``OutboundMessage``.
-        4. ``send()`` detects ``_request_id`` in metadata → resolves Future.
-        5. This handler returns the result in the HTTP response body.
-        """
-        task = body.get("task", "")
-        data = body.get("data")
-        context_id = body.get("context_id", uuid.uuid4().hex[:8])
-        origin = body.get("origin", {})
-        sender = origin.get("agent", "swarm")
-
-        if not task:
-            return web.json_response({"error": "Missing 'task' field"}, status=400)
-
-        # Unique request ID for correlating the outbound response
-        request_id = uuid.uuid4().hex
-        session_key = f"swarm:{context_id}"
-
-        # Create Future to wait for AgentLoop's response
-        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
-        self._pending_requests[request_id] = future
-
-        # Build LLM-visible content
-        content_parts: list[str] = [f"[Message from {sender}]", task]
-        if data:
-            if isinstance(data, str) and data.strip():
-                content_parts.append(f"\nData:\n{data}")
-            elif isinstance(data, (dict, list)):
-                content_parts.append(
-                    f"\nData:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
-                )
-        text = "\n".join(content_parts)
-
-        # Machine metadata — propagated to OutboundMessage by AgentLoop
-        metadata = {"_request_id": request_id}
-
-        logger.info(
-            "[swarm] sync task from '{}' (context={}): {}",
-            sender, context_id, task[:80],
-        )
-
-        # Publish to AgentLoop via bus (reuses existing session/lock logic)
-        await self._handle_message(
-            sender_id=sender,
-            chat_id=session_key,
-            content=text,
-            media=[],
-            metadata=metadata,
-        )
-
-        # Wait for AgentLoop to produce response
-        try:
-            result = await asyncio.wait_for(future, timeout=120)
-            return web.json_response({
-                "status": "completed",
-                "result": result,
-                "context_id": context_id,
-            })
-        except asyncio.TimeoutError:
-            logger.error("[swarm] timeout waiting for AgentLoop (context={})", context_id)
-            return web.json_response({
-                "status": "failed",
-                "error": "Agent did not respond within 120 seconds",
-            }, status=504)
-        except Exception as exc:
-            logger.error("[swarm] unexpected error (context={}): {}", context_id, exc)
-            return web.json_response({
-                "status": "failed",
-                "error": str(exc),
-            }, status=500)
-        finally:
-            self._pending_requests.pop(request_id, None)
 
     # ------------------------------------------------------------------ #
     # Handler: raw (pass full body as JSON)                               #
