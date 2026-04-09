@@ -8,9 +8,6 @@ Each *slot* is a named webhook receiver with its own:
 - Optional fixed session key
 
 Slots are configured in ``channels.webhook.slots`` in ``config.json``.
-
-Note: Inter-agent Swarm communication has been moved to ``SwarmWSChannel``
-(see ``swarm_ws.py``).  This channel now handles only external HTTP webhooks.
 """
 
 import asyncio
