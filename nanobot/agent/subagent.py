@@ -49,7 +49,7 @@ class _SubagentLogHook(AgentHook):
         task: str,
         workspace: Path,
     ) -> None:
-        super().__init__()
+        super().__init__(reraise=True)
         self._task_id = task_id
         self._label = label
         self._log_dir = workspace / "subagents"

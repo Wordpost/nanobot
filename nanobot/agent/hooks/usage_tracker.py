@@ -31,6 +31,7 @@ class UsageTrackerHook(AgentHook):
     __slots__ = ("_session",)
 
     def __init__(self) -> None:
+        super().__init__(reraise=True)
         self._session: Session | None = None
 
     def bind_session(self, session: Session | None) -> None:
