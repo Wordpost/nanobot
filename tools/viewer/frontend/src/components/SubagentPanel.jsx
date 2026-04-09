@@ -7,7 +7,7 @@ import { useSSE } from '../hooks/useSSE.js'
 import { AgentSelector } from './AgentSelector.jsx'
 import { Markdown } from './Markdown.jsx'
 import { showToast } from './Toast.jsx'
-import { formatTokens, formatDate } from '../utils/format.js'
+import { formatTokens, formatDate, formatTime } from '../utils/format.js'
 
 export function SubagentPanel() {
   const [agent, setAgent] = useState(null)
@@ -69,7 +69,8 @@ export function SubagentPanel() {
                 <div class="subagent-item-footer">
                   <span class="subagent-list-id">{s.filename}</span>
                   <div class="subagent-meta-block">
-                    {s.duration_ms && <span class="subagent-duration">{(s.duration_ms/1000).toFixed(1)}s</span>}
+                    {s.finished && <span class="subagent-finished">{formatTime(s.finished)}</span>}
+                    {s.duration && <span class="subagent-duration">{s.duration}</span>}
                     {s.iterations && <span>{s.iterations} iter</span>}
                   </div>
                 </div>
@@ -91,6 +92,7 @@ export function SubagentPanel() {
                       {detail.usage.cached_tokens > 0 && <div class="usage-item"><span class="label">Cached:</span> <span class="value">{formatTokens(detail.usage.cached_tokens)}</span></div>}
                       <div class="usage-item"><span class="label">Requests:</span> <span class="value">{detail.usage.requests}</span></div>
                       <div class="usage-item"><span class="label">Time:</span> <span class="value">{detail.duration || 'n/a'}</span></div>
+                      <div class="usage-item"><span class="label">Finished:</span> <span class="value">{detail.finished ? formatTime(detail.finished) : 'n/a'}</span></div>
                     </div>
                   )}
                 </div>

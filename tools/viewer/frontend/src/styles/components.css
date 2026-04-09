@@ -1554,6 +1554,11 @@ em {
   gap: var(--sp-10);
 }
 
+.subagent-item-footer {
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
 .subagent-meta-block {
   display: flex;
   align-items: center;
