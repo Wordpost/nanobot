@@ -31,7 +31,6 @@ def _slugify(text: str) -> str:
     slug = re.sub(r'[-\s]+', '_', slug).strip('_')
     return slug[:50]
 
-
 class _SubagentLogHook(AgentHook):
     """Lifecycle hook that logs subagent execution to a JSON file (fork-local).
 
@@ -50,6 +49,7 @@ class _SubagentLogHook(AgentHook):
         task: str,
         workspace: Path,
     ) -> None:
+        super().__init__()
         self._task_id = task_id
         self._label = label
         self._log_dir = workspace / "subagents"
