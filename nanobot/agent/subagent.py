@@ -2,15 +2,14 @@
 
 import asyncio
 import json
-import re
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from loguru import logger
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
+from nanobot.agent.hooks.subagent_logger import SubagentLogHook  # (fork-local)
 from nanobot.utils.prompt_templates import render_template
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -25,136 +24,20 @@ from nanobot.config.schema import ExecToolConfig, WebToolsConfig
 from nanobot.providers.base import LLMProvider
 
 
-def _slugify(text: str) -> str:
-    """Convert text to a filesystem-safe slug."""
-    slug = re.sub(r'[^\w\s-]', '', text.lower())
-    slug = re.sub(r'[-\s]+', '_', slug).strip('_')
-    return slug[:50]
+class _SubagentHook(AgentHook):
+    """Logging-only hook for subagent execution."""
 
-class _SubagentLogHook(AgentHook):
-    """Lifecycle hook that logs subagent execution to a JSON file (fork-local).
-
-    Creates a structured execution report at ``workspace/subagents/{task_id}_{slug}.json``
-    containing task metadata, each iteration's tool calls with arguments and
-    results, model responses, usage metrics, and the final outcome.
-    """
-
-    _MAX_RESULT_CHARS = 2000
-    _MAX_THINKING_CHARS = 3000
-
-    def __init__(
-        self,
-        task_id: str,
-        label: str,
-        task: str,
-        workspace: Path,
-    ) -> None:
-        super().__init__(reraise=True)
+    def __init__(self, task_id: str) -> None:
+        super().__init__()
         self._task_id = task_id
-        self._label = label
-        self._log_dir = workspace / "subagents"
-        self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._log_file = self._log_dir / f"{task_id}_{_slugify(label)}.json"
-        self._started = datetime.now()
-        self._requests_count = 0
-        self._total_usage: dict[str, int] = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "cached_tokens": 0,
-        }
-        self._data: dict[str, Any] = {
-            "task_id": task_id,
-            "label": label,
-            "task": task,
-            "started": self._started.isoformat(),
-            "status": "running",
-            "finished": None,
-            "duration": None,
-            "usage": {},
-            "iterations": [],
-            "final_result": "",
-        }
-        self._flush()
 
     async def before_execute_tools(self, context: AgentHookContext) -> None:
-        for tc in context.tool_calls:
-            args_str = json.dumps(tc.arguments, ensure_ascii=False)
+        for tool_call in context.tool_calls:
+            args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
             logger.debug(
                 "Subagent [{}] executing: {} with arguments: {}",
-                self._task_id, tc.name, args_str,
+                self._task_id, tool_call.name, args_str,
             )
-
-    async def after_iteration(self, context: AgentHookContext) -> None:
-        self._requests_count += 1
-
-        # Accumulate usage from this iteration
-        iter_usage = context.usage or {}
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"):
-            self._total_usage[key] = self._total_usage.get(key, 0) + iter_usage.get(key, 0)
-
-        # Build iteration record
-        iteration_data: dict[str, Any] = {
-            "number": context.iteration,
-            "model_response": None,
-            "usage": dict(iter_usage) if iter_usage else {},
-            "tool_calls": [],
-        }
-
-        if context.response and context.response.content:
-            thinking = context.response.content
-            if len(thinking) > self._MAX_THINKING_CHARS:
-                thinking = thinking[: self._MAX_THINKING_CHARS] + "\n\n... (truncated)"
-            iteration_data["model_response"] = thinking
-
-        for i, tc in enumerate(context.tool_calls):
-            tc_data = self._format_tool_call(tc, context.tool_results, i)
-            iteration_data["tool_calls"].append(tc_data)
-
-        self._data["iterations"].append(iteration_data)
-        self._data["usage"] = {
-            **self._total_usage,
-            "requests": self._requests_count,
-        }
-        self._flush()
-
-    def _format_tool_call(self, tc: Any, results: list[Any], index: int) -> dict[str, str]:
-        """Format a single tool call with its arguments and result."""
-        args_str = json.dumps(tc.arguments, ensure_ascii=False, indent=2)
-        tc_data: dict[str, str] = {
-            "name": tc.name,
-            "arguments": args_str,
-            "result": "",
-        }
-        if index < len(results):
-            result_str = str(results[index])
-            if len(result_str) > self._MAX_RESULT_CHARS:
-                result_str = result_str[: self._MAX_RESULT_CHARS] + "\n... (truncated)"
-            tc_data["result"] = result_str
-        return tc_data
-
-    def write_final(self, status: Literal["ok", "error"], result: str) -> None:
-        """Write final outcome. Called explicitly from SubagentManager."""
-        elapsed = datetime.now() - self._started
-        self._data["status"] = status
-        self._data["finished"] = datetime.now().isoformat()
-        self._data["duration"] = f"{elapsed.total_seconds():.1f}s"
-        self._data["final_result"] = result
-        self._data["usage"] = {
-            **self._total_usage,
-            "requests": self._requests_count,
-        }
-        self._flush()
-
-    def _flush(self) -> None:
-        """Write current state to disk."""
-        try:
-            self._log_file.write_text(
-                json.dumps(self._data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            logger.warning("Failed to write subagent log {}: {}", self._log_file, e)
 
 
 class SubagentManager:
@@ -226,7 +109,7 @@ class SubagentManager:
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
-        hook: _SubagentLogHook | None = None
+        log_hook: SubagentLogHook | None = None  # (fork-local) structured logger
 
         try:
             # Build subagent tools (no message tool, no spawn tool)
@@ -256,7 +139,9 @@ class SubagentManager:
                 {"role": "user", "content": task},
             ]
 
-            hook = _SubagentLogHook(task_id, label, task, self.workspace)
+            # (fork-local) Combine upstream debug hook with our JSON logger
+            log_hook = SubagentLogHook(task_id, label, task, self.workspace)
+            hook = CompositeHook([_SubagentHook(task_id), log_hook])
 
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
@@ -271,28 +156,31 @@ class SubagentManager:
             ))
             if result.stop_reason == "tool_error":
                 partial = self._format_partial_progress(result)
-                hook.write_final("error", partial)
+                if log_hook:  # (fork-local)
+                    log_hook.write_final("error", partial)
                 await self._announce_result(
                     task_id, label, task, partial, origin, "error",
                 )
                 return
             if result.stop_reason == "error":
                 error_msg = result.error or "Error: subagent execution failed."
-                hook.write_final("error", error_msg)
+                if log_hook:  # (fork-local)
+                    log_hook.write_final("error", error_msg)
                 await self._announce_result(
                     task_id, label, task, error_msg, origin, "error",
                 )
                 return
             final_result = result.final_content or "Task completed but no final response was generated."
+            if log_hook:  # (fork-local)
+                log_hook.write_final("ok", final_result)
 
-            hook.write_final("ok", final_result)
             logger.info("Subagent [{}] completed successfully", task_id)
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
-            if hook is not None:
-                hook.write_final("error", error_msg)
+            if log_hook is not None:  # (fork-local)
+                log_hook.write_final("error", error_msg)
             logger.error("Subagent [{}] failed: {}", task_id, e)
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
