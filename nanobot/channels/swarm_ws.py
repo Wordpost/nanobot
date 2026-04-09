@@ -60,6 +60,10 @@ class SwarmWSChannel(BaseChannel):
         self._swarm_token: str = ""
         self._swarm_port: int = self._DEFAULT_PORT
 
+    def is_allowed(self, sender_id: str) -> bool:
+        """Override BaseChannel: auth is handled via HMAC token, so allow any sender id."""
+        return True
+
     # ------------------------------------------------------------------ #
     # Lifecycle                                                           #
     # ------------------------------------------------------------------ #
