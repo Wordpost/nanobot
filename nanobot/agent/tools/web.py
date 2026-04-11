@@ -206,15 +206,20 @@ class WebSearchTool(Tool):
 
     async def _search_duckduckgo(self, query: str, n: int) -> str:
         try:
-            # Note: duckduckgo_search is synchronous and does its own requests
-            # We run it in a thread to avoid blocking the loop
+            # (fork-local) Note: duckduckgo_search is synchronous and does its own requests
+            # We run it in a thread to avoid blocking the loop, but use a lock to serialize concurrent calls 
+            # to prevent deadlocks in primp/ddgs initialization inside ThreadPoolExecutor.
             from ddgs import DDGS
 
-            ddgs = DDGS(timeout=10)
-            raw = await asyncio.wait_for(
-                asyncio.to_thread(ddgs.text, query, max_results=n),
-                timeout=self.config.timeout,
-            )
+            if not hasattr(self, "_ddgs_lock"):
+                self._ddgs_lock = asyncio.Lock()
+
+            async with self._ddgs_lock:
+                ddgs = DDGS(timeout=10)
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(ddgs.text, query, max_results=n),
+                    timeout=self.config.timeout,
+                )
             if not raw:
                 return f"No results for: {query}"
             items = [
@@ -222,6 +227,9 @@ class WebSearchTool(Tool):
                 for r in raw
             ]
             return _format_results(query, items, n)
+        except asyncio.TimeoutError:
+            logger.warning("DuckDuckGo search timed out after {}s for: {}", self.config.timeout, query)
+            return f"Error: DuckDuckGo search timed out after {self.config.timeout}s"
         except Exception as e:
             logger.warning("DuckDuckGo search failed: {}", e)
             return f"Error: DuckDuckGo search failed ({e})"
