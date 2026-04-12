@@ -495,10 +495,7 @@ class AgentLoop:
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Process a message: per-session serial, cross-session concurrent."""
         session_key = self._effective_session_key(msg)
-        if not msg.session_key_override and msg.channel == "system":
-            session_key = msg.chat_id
-            msg = dataclasses.replace(msg, session_key_override=session_key)
-        elif session_key != msg.session_key:
+        if session_key != msg.session_key:
             msg = dataclasses.replace(msg, session_key_override=session_key)
         
         lock = self._session_locks.setdefault(session_key, asyncio.Lock())
@@ -563,6 +560,7 @@ class AgentLoop:
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel, chat_id=msg.chat_id,
                         content="Sorry, I encountered an error.",
+                        metadata=msg.metadata or {}, # (fork-local)
                     ))
         finally:
             # Drain any messages still in the pending queue and re-publish
@@ -634,7 +632,7 @@ class AgentLoop:
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
             self._usage_hook.bind_session(session)  # (fork-local)
             history = session.get_history(max_messages=0)
-            current_role = "assistant" if msg.sender_id == "subagent" else "user"
+            current_role = "user" # (fork-local) change to "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
