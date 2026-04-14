@@ -1053,6 +1053,30 @@ Connects directly to any OpenAI-compatible endpoint — LM Studio, llama.cpp, To
 ```
 
 > For local servers that don't require a key, set `apiKey` to any non-empty string (e.g. `"no-key"`).
+>
+> `custom` is the right choice for providers that expose an OpenAI-compatible **chat completions** API. It does **not** force third-party endpoints onto the OpenAI/Azure **Responses API**.
+>
+> If your proxy or gateway is specifically Responses-API-compatible, use the `azure_openai` provider shape instead and point `apiBase` at that endpoint:
+>
+> ```json
+> {
+>   "providers": {
+>     "azure_openai": {
+>       "apiKey": "your-api-key",
+>       "apiBase": "https://api.your-provider.com",
+>       "defaultModel": "your-model-name"
+>     }
+>   },
+>   "agents": {
+>     "defaults": {
+>       "provider": "azure_openai",
+>       "model": "your-model-name"
+>     }
+>   }
+> }
+> ```
+>
+> In short: **chat-completions-compatible endpoint → `custom`**; **Responses-compatible endpoint → `azure_openai`**.
 
 </details>
 
@@ -1703,6 +1727,7 @@ Example config:
     }
   },
   "gateway": {
+    "host": "127.0.0.1",
     "port": 18790
   }
 }
@@ -1714,6 +1739,14 @@ Start separate instances:
 nanobot gateway --config ~/.nanobot-telegram/config.json
 nanobot gateway --config ~/.nanobot-discord/config.json
 ```
+
+Each gateway instance also exposes a lightweight HTTP health endpoint on
+`gateway.host:gateway.port`. By default, the gateway binds to `127.0.0.1`,
+so the endpoint stays local unless you explicitly set `gateway.host` to a
+public or LAN-facing address.
+
+- `GET /health` returns `{"status":"ok"}`
+- Other paths return `404`
 
 Override workspace for one-off runs when needed:
 
@@ -1742,6 +1775,7 @@ time.
 
 - `memory/history.jsonl` stores append-only summarized history
 - `SOUL.md`, `USER.md`, and `memory/MEMORY.md` store long-term knowledge managed by Dream
+- `Dream` can also promote repeated workflows into reusable workspace skills under `skills/`
 - `Dream` runs on a schedule and can also be triggered manually
 - memory changes can be inspected and restored with built-in commands
 
@@ -1857,6 +1891,19 @@ By default, the API binds to `127.0.0.1:8900`. You can change this in `config.js
 - Single-message input: each request must contain exactly one `user` message
 - Fixed model: omit `model`, or pass the same model shown by `/v1/models`
 - No streaming: `stream=true` is not supported
+- API requests run in the synthetic `api` channel, so the `message` tool does **not** automatically deliver to Telegram/Discord/etc. To proactively send to another chat, call `message` with an explicit `channel` and `chat_id` for an enabled channel.
+
+Example tool call for cross-channel delivery from an API session:
+
+```json
+{
+  "content": "Build finished successfully.",
+  "channel": "telegram",
+  "chat_id": "123456789"
+}
+```
+
+If `channel` points to a channel that is not enabled in your config, nanobot will queue the outbound event but no platform delivery will occur.
 
 ### Endpoints
 
