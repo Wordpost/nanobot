@@ -33,7 +33,7 @@ class WebhookSlot:
     """A single named webhook receiver configuration.
 
     Handler type is derived from the slot name for built-in types
-    (``swarm``, ``raw``).  All other names default to ``standard``.
+    (``raw``).  All other names default to ``standard``.
     Path defaults to ``/webhook/{name}`` (or ``/webhook`` for "default").
     """
 
