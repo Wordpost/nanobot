@@ -937,7 +937,7 @@ class AgentLoop:
                 "include_timestamps": True,
             }
             history = session.get_history(**_hist_kwargs)
-            current_role = "assistant" if is_subagent else "user"
+            current_role = "user" # (fork-local) change to "assistant" if is_subagent else "user"
 
             # Subagent content is already in `history` above; passing it again
             # as current_message would double-project it into the prompt.
