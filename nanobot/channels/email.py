@@ -6,6 +6,7 @@ import imaplib
 import re
 import smtplib
 import ssl
+from contextlib import suppress
 from datetime import date
 from email import policy
 from email.header import decode_header, make_header
@@ -395,6 +396,7 @@ class EmailChannel(BaseChannel):
                         "(no 'spf=pass' in Authentication-Results header)",
                         sender,
                     )
+                    self._remember_processed_uid(uid, dedupe, cycle_uids)
                     continue
                 if self.config.verify_dkim and not dkim_pass:
                     logger.warning(
@@ -402,6 +404,7 @@ class EmailChannel(BaseChannel):
                         "(no 'dkim=pass' in Authentication-Results header)",
                         sender,
                     )
+                    self._remember_processed_uid(uid, dedupe, cycle_uids)
                     continue
 
                 subject = self._decode_header_value(parsed.get("Subject", ""))
@@ -458,10 +461,8 @@ class EmailChannel(BaseChannel):
                 if mark_seen:
                     client.store(imap_id, "+FLAGS", "\\Seen")
         finally:
-            try:
+            with suppress(Exception):
                 client.logout()
-            except Exception:
-                pass
 
     def _collect_self_addresses(self) -> set[str]:
         """Return normalized email addresses owned by this channel instance."""
